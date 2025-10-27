@@ -1,0 +1,267 @@
+###csaw analysis###
+library(rtracklayer)
+library(csaw)
+library(GenomicRanges)
+library(SummarizedExperiment)
+library(S4Vectors)
+
+"~/Desktop/Rebecca paper/degcre/ATAC_normalized_counts_matrix.csv"#counts matrix
+counts_matrix <- read.csv("~/Desktop/ATAC_normalized_counts_matrix.csv", header = TRUE)
+
+
+#peakinfo, granges
+peak_ranges<-makeGRangesFromDataFrame(counts_matrix[,1:4],keep.extra.columns = TRUE)
+
+#summarized object
+se_object <- SummarizedExperiment(assays = list(counts = as.matrix(counts_matrix[,5:16])), rowRanges = peak_ranges) 
+se_object$totals <- c(92852562, 116990304, 143967900, 135791068, 90125588, 146721358, 120516074, 107355642, 102799738, 134543446, 85994858, 141253244)
+counts_matrix <- assays(se_object)$counts
+
+se_object <- normOffsets(se_object)
+
+sample_metadata <- data.frame(time = c("E12.5", "E12.5","E14.5","E14.5","P0","P0","P07","P07","P21","P21","Adult","Adult"),row.names = c("E125_1","E125_2","E145_1","E145_2","ACP0_1","ACP0_2","ACP07_1","ACP07_2","ACP21_1","ACP21_2","A649_1","A653_2"))
+
+#time as numeric
+sample_metadata <- data.frame(time = c("12", "12", "14", "14","21", "21", "28","28","42", "42","90","90"),row.names = c("E12.5", "E12.5","E14.5","E14.5","P0","P0","P07","P07","P21","P21","Adult","Adult"),row.names = c("E125_1","E125_2","E145_1","E145_2","ACP0_1","ACP0_2","ACP07_1","ACP07_2","ACP21_1","ACP21_2","A649_1","A653_2"))
+
+sample_metadata_df <- S4Vectors::DataFrame(sample_metadata)
+colData(se_object) <- sample_metadata_df
+
+#design regression matrix
+design_matrix <- model.matrix(~as.numeric(time), data = colData(se_object))
+print(design_matrix)
+
+#statistical test
+se_object_edge <- estimateDisp(se_object, design_matrix)
+fit <- glmFit(se_object_edge, design_matrix)
+lrt <- glmLRT(fit, coef = 2) # Adjust 'coef' based on your design matrix, i.e. 1=intercept B-zero
+
+#to set null hypothesis above 0, possibly improves FDR for stronger peaks.
+log_fold_change <- log2(1.2)
+results_lrt <- glmTreat(fit, coef = 2, lfc = log_fold_change)
+
+#save data
+results <- topTags(lrt, n = Inf, sort.by = "PValue")
+results_table<-results$table
+write.csv(results_table, file = "~/Desktop/csaw_results.csv", row.names = TRUE)
+
+#alt. to raw counts matrix, starting with Rebecca's filtered counts matrix that has chr start end
+library(edgeR)
+counts_matrix <- read.csv("~/Desktop/counts_cleaned.csv", header = TRUE)
+CREobj<- makeGRangesFromDataFrame(counts_matrix, keep.extra.columns = TRUE,seqnames.field = "name", start.field = "start",end.field = "end")  
+counts_matrix <- as.matrix(mcols(CREobj))
+group <- factor(c("E12.5", "E12.5","E14.5", "E14.5","P0","P0", "P7","P7","P21", "P21","Adult","Adult"))
+group<- as.numeric(c("12","12","14","14","21","21","28","28","42","42","90","90"))
+y <- DGEList(counts = counts_matrix, group = group, genes = as.data.frame(CREobj))
+y <- calcNormFactors(y)
+design <- model.matrix(~group)
+y <- estimateDisp(y, design)
+fit <- glmQLFit(y, design, robust = TRUE)
+qlf <- glmQLFTest(fit, coef=2)
+topTags(qlf)
+results_table <- topTags(qlf, n = Inf, sort.by = "PValue")$table
+significant_regions <- results_table[results_table$PValue < 0.05, ]
+write.csv(significant_regions,"~/Desktop/csawresults.csv", row.names = FALSE)
+
+#rna-seq
+library(DESeq2)
+
+cts<-read.csv("~/Desktop/WT_RNA_norm_ensembl.csv",row.names=1, header=TRUE)
+coldat<-read.csv("~/Desktop/WT_RNA_metadata.csv")
+dds <- DESeqDataSetFromMatrix(countData=round(cts),colData=coldat,design=~time)
+#dds <- DESeq(dds)
+dds_lrt <- DESeq(dds, test="LRT", reduced = ~ 1)
+#res <- results(dds, alpha=.05, name = "time")
+res <- results(dds_lrt)
+
+###DegCre###
+
+BiocManager::install("DegCre")
+library(GenomicRanges)
+library(InteractionSet)
+library(plotgardener)
+library(TxDb.Mmusculus.UCSC.mm10.knownGene)
+library(org.Mm.eg.db)
+library(DegCre)
+library(magick)
+library(biomaRt)
+library(TEKRABber)
+
+#deseq2 output, edited colname of rows to "name"
+deseq_data<-read.csv("~/Desktop/deg_rna_results.csv")
+
+
+#get tss info, currently pulls mm10
+my_ensmusg_ids<-deseq_data$name
+
+#mm10, last release
+ensembl_mm10 <- useEnsembl(biomart = "ensembl",dataset = "mmusculus_gene_ensembl",version = 102)
+gene_info <- getBM(
+  attributes = c("ensembl_gene_id", "chromosome_name", "start_position", "end_position", "strand"),
+  filters = "ensembl_gene_id",
+  values = my_ensmusg_ids,
+  mart = ensembl_mm10)
+
+#keep in mind that all TSS will be defined at 5' end on + strand
+#because granges won't accept output below, ignore this code!!!
+library(dplyr)
+gene_info2 <- gene_info %>%
+  mutate(
+    gene_start_new = if_else(strand == -1, end_position, start_position),
+    gene_end_new = if_else(strand == -1, start_position, end_position)
+  ) %>%
+  select(-start_position, -end_position) %>% # Optionally remove the original columns
+  rename(start_position = gene_start_new, end_position = gene_end_new) 
+
+#merge tss and deseq2 output
+merged_data <- merge(gene_info,deseq_data, by.x = "ensembl_gene_id", by.y = "name")
+merged_data$strand <- ifelse(merged_data$strand == 1, "+", "-")
+merged_data$chromosome_name<- paste0("chr", merged_data$chromosome_name)
+
+gr_object <- makeGRangesFromDataFrame(
+  merged_data,
+  keep.extra.columns = TRUE,
+  seqnames.field = "chromosome_name",
+  start.field = "start_position",
+  end.field = "end_position",
+  strand.field = "strand")
+
+csaw_data<-read.csv("~/Desktop/csaw_results.csv")
+gr_object2 <- makeGRangesFromDataFrame(
+  csaw_data,
+  keep.extra.columns = TRUE,
+  seqnames.field = "seqnames",
+  start.field = "start",
+  end.field = "end",
+  strand.field = "strand")
+
+
+#filter csaw to remove peaks that aren't within N-1 bp of genes in the rnaseq
+overlaps <- findOverlaps(gr_object2, gr_object, maxgap = 99999)
+overlapping_indices <- unique(queryHits(overlaps))
+filtered_Cre <- gr_object2[overlapping_indices]
+
+
+#create DegCre Object with distance filter
+myDegCreResList <- runDegCre(DegGR=gr_object,
+                             DegP=gr_object$pvalue,
+                             DegLfc=gr_object$log2FoldChange,
+                             CreGR=filtered_Cre,
+                             CreP=filtered_Cre$PValue,
+                             CreLfc=filtered_Cre$logFC, 
+                             reqEffectDirConcord=TRUE,
+                             verbose=FALSE)
+
+#without distance filter
+myDegCreResList <- runDegCre(DegGR=gr_object,
+                             DegP=gr_object$pvalue,
+                             DegLfc=gr_object$log2FoldChange,
+                             CreGR=gr_object2,
+                             CreP=gr_object2$PValue,
+                             CreLfc=gr_object2$logFC, 
+                             reqEffectDirConcord=TRUE,
+                             verbose=FALSE)
+
+#filter results
+passFDR <- which(mcols(myDegCreResList$degCreHits)$assocProbFDR <= 0.05)
+passProb <- which(mcols(myDegCreResList$degCreHits)$assocProb >= 0.25)
+keepDegCreHits <- myDegCreResList$degCreHits[intersect(passFDR,passProb)]
+
+#find optimal alpha with filter
+alphaOptList <- optimizeAlphaDegCre(DegGR=gr_object,
+                                    DegP=gr_object$pvalue,
+                                    DegLfc=gr_object$log2FoldChange,
+                                    CreGR=filtered_Cre,
+                                    CreP=filtered_Cre$PValue,
+                                    CreLfc=filtered_Cre$logFC,
+                                    reqEffectDirConcord=TRUE,
+                                    verbose=FALSE)
+
+#without filter
+alphaOptList <- optimizeAlphaDegCre(DegGR=gr_object,
+                                    DegP=gr_object$pvalue,
+                                    DegLfc=gr_object$log2FoldChange,
+                                    CreGR=gr_object2,
+                                    CreP=gr_object2$PValue,
+                                    CreLfc=gr_object2$logFC,
+                                    reqEffectDirConcord=TRUE,
+                                    verbose=FALSE)
+
+alphaOptList$alphaPRMat
+bestAlphaId <- which.max(alphaOptList$alphaPRMat[,4])
+bestDegCreResList <- alphaOptList$degCreResListsByAlpha[[bestAlphaId]]
+
+#visualize DegCre
+par(mai=c(0.8,1.6,0.4,0.1))
+par(mgp=c(1.7,0.5,0))
+par(cex.axis=1)
+par(cex.lab=1.4)
+par(bty="l")
+par(lwd=2)
+
+binStats <- plotDegCreAssocProbVsDist(degCreResList=bestDegCreResList,assocProbFDRThresh=0.05)
+
+
+#visualize optimal bin
+par(mai=c(0.8,0.6,0.4,0.1))
+par(mgp=c(1.7,0.5,0))
+par(cex.axis=1)
+par(cex.lab=1.4)
+par(bty="l")
+par(lwd=1.5)
+
+plotDegCreBinHeuristic(degCreResList=bestDegCreResList)
+
+
+#visualize PPV vs TPR (should be diagonal ideally)
+par(mai=c(0.8,0.6,0.4,0.1))
+par(mgp=c(1.7,0.5,0))
+par(cex.axis=1)
+par(cex.lab=1.4)
+par(bty="l")
+par(lwd=1.5)
+
+degCrePRAUC(degCreResList=bestDegCreResList)
+
+#visualize number of CRE associations per DEG
+expectAssocPerDegDf <- getExpectAssocPerDEG(degCreResList=bestDegCreResList,
+                                            geneNameColName="ensembl_gene_id",
+                                            assocAlpha=0.05)
+par(mai=c(0.8,0.6,0.4,0.1))
+par(mgp=c(1.7,0.5,0))
+par(cex.axis=1)
+par(cex.lab=1.4)
+par(bty="l")
+
+#dashed line is median
+plotExpectedAssocsPerDeg(expectAssocPerDegDf=expectAssocPerDegDf)
+
+#browser style visualization, Ret
+par(mai=c(0.8,0.6,0.4,0.1))
+par(mgp=c(1.7,0.5,0))
+browserOuts <- plotBrowserDegCre(degCreResList=bestDegCreResList,
+                                 geneName="ENSMUSG00000030110",
+                                 geneNameColName="ensembl_gene_id",
+                                 CreSignalName="chunk0105_1176_1",
+                                 panelTitleFontSize=8,
+                                 geneLabelFontsize=10,
+                                 plotXbegin=0.9,
+                                 plotWidth=5,assembly='mm10')
+
+#zoom
+pdf("~/Desktop/my_plot.pdf", width = 8, height = 6)
+zoomGR <- GRanges(seqnames="chr6",ranges=IRanges(start=118149748 bp,end=118199744))
+browserOuts <- plotBrowserDegCre(degCreResList=bestDegCreResList,
+                                 plotRegionGR=zoomGR,
+                                 geneName="ENSMUSG00000030110",
+                                 geneNameColName="ensembl_gene_id",
+                                 CreSignalName="chunk0105_1176_1",
+                                 panelTitleFontSize=8,
+                                 geneLabelFontsize=10,
+                                 plotXbegin=0.9,
+                                 plotWidth=5, assembly='mm10')
+dev.off()
+
+#output results as dataframe
+degCreDf <- convertDegCreDataFrame(degCreResList=bestDegCreResList,assocAlpha=0.05)
+write.csv(degCreDf,"~/Desktop/test.csv")
