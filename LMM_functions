@@ -1,0 +1,142 @@
+#Linear Mixed Model Functions for ATAC and RNA integration
+
+####linear mixed model for 12 datapoints from 6 timepoints
+#Note that I subsetted a list of hscr_correlations from all possible correlations###
+
+#load stuff
+library(furrr) #to parrallelerize
+plan(multisession, workers = 8)
+library(tidyr)
+library(dplyr)
+
+#hscr_table is dataframe of Gene ~ Peak Pairs, see pearson correlation pipeline
+#output is the variable final_results_df
+
+results_with_lmm <- hscr_table[,1:2] %>%
+  mutate(
+    lmm_results = future_map2(
+      .x = hscr_table$gene_id,
+      .y = hscr_table$peak_id,
+      .f = ~ run_lmm_for_pair(
+        target_gene_id = .x,
+        target_peak_id = .y,
+        rna_matrix = rna_data, 
+        atac_matrix = atac_data_nochr
+      )
+    )
+  )
+
+message("Analysis complete. Consolidating results...")
+
+# --- 5. Consolidate the Final Data Frame ---
+#
+# The 'lmm_results' column is currently a list of data frames.
+# 'unnest' expands it into proper columns.
+final_results_df <- results_with_lmm %>%
+  unnest(lmm_results)
+
+#adjust pvalue after running function below
+final_results_df$padj <- p.adjust(final_results_df$p.value, method = "BH")
+
+# --- 6. Shut Down Parallel Workers ---
+plan(sequential)
+
+
+#above requires this function
+
+run_lmm_for_pair <- function(target_gene_id, target_peak_id, rna_matrix, atac_matrix) {
+  
+  # Use tryCatch to handle any potential errors
+  result <- tryCatch({
+    
+    # 1. Create the 12-row long data frame
+    # (This uses the 'create_lmm_data' function from our last conversation)
+    long_df <- create_lmm_data(
+      target_gene_id = target_gene_id,
+      target_peak_id = target_peak_id,
+      rna_matrix = rna_matrix,
+      atac_matrix = atac_matrix
+    )
+    
+    # 2. Run the model
+    # (Note: 'suppressMessages' just hides convergence notes)
+    model <- suppressMessages(
+      lmer(RNA_Value ~ ATAC_Value + (1 | Time), data = long_df)
+    )
+    
+    # 3. Get the summary
+    model_summary <- summary(model)
+    
+    # 4. Extract the coefficients for our variable of interest
+    # We look for the row named "ATAC_Value" in the fixed effects table
+    coefs <- model_summary$coefficients["ATAC_Value", ]
+    
+    # 5. Return the results as a data frame
+    data.frame(
+      Estimate = coefs["Estimate"],
+      t.value = coefs["t value"],
+      p.value = coefs["Pr(>|t|)"]
+    )
+    
+  }, 
+  # This 'error' function is what happens if the 'tryCatch' block fails
+  error = function(e) {
+    # If an error occurred, return a row of NAs
+    # You can also log the error: message("Error for ", target_gene_id, ": ", e$message)
+    data.frame(
+      Estimate = NA,
+      t.value = NA,
+      p.value = NA
+    )
+  })
+  
+  return(result)
+}
+
+
+#above depends on this function
+create_lmm_data <- function(target_gene_id, target_peak_id, rna_matrix, atac_matrix) {
+  
+  # --- 1. Define Your Metadata ---
+  #
+  # !! CRITICAL ASSUMPTION !!
+  # This assumes the 12 columns in your rna_matrix and atac_matrix
+  # are in the *exact same order* and correspond to this structure:
+  # T1-R1, T1-R2, T2-R1, T2-R2, T3-R1, T3-R2, ... T6-R1, T6-R2
+  #
+  
+  timepoints <- rep(c("T1", "T2", "T3", "T4", "T5", "T6"), each = 2)
+  replicates <- rep(c("R1", "R2"), times = 6)
+  
+  
+  # --- 2. Extract Data Vectors ---
+  
+  # Get the row of 12 values for the target gene
+  gene_vec <- rna_matrix[target_gene_id, ]
+  
+  # Get the row of 12 values for the target peak
+  peak_vec <- atac_matrix[target_peak_id, ]
+  
+  
+  # --- 3. Validation ---
+  
+  # Check if IDs were found
+  if (is.null(gene_vec) | length(gene_vec) == 0) {
+    stop(paste("Target gene ID not found in rna_matrix:", target_gene_id))
+  }
+  if (is.null(peak_vec) | length(peak_vec) == 0) {
+    stop(paste("Target peak ID not found in atac_matrix:", target_peak_id))
+  }
+  
+  
+  # --- 4. Create Long Data Frame ---
+  
+  long_df <- data.frame(
+    Time = as.factor(timepoints),       # Set as factor for the LMM random effect
+    Replicate = as.factor(replicates), # Also a good idea to factor
+    RNA_Value = as.numeric(gene_vec),
+    ATAC_Value = as.numeric(peak_vec)
+  )
+  
+  return(long_df)
+}
