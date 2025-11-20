@@ -1,0 +1,59 @@
+
+#scripts to plot number of temporal peaks vs total peaks as a scatterplot
+#plotting script can be modified to plot temporal vs. constant
+
+####splitting constant and temporal peaks###
+temporal_peaks <- atac_temporal$newname
+atac_temporal <- atac_data_nochr[rownames(atac_data_nochr) %in% temporal_peaks, ]
+atac_constant <- atac_data_nochr[!rownames(atac_data_nochr) %in% temporal_peaks, ]
+
+#list of hscr genes or other gene list
+#kif1bp name not in ensembl, need to use kif1b
+hscr_genes<-c("Ret","Gdnf","Gfra1","Nrtn","Sox10","Ednrb","Edn3","Ece1","Zeb2","Phox2b","Kif1b","Tcf4","L1cam","Elp1","Sema3c","Sema3d","Nrg1","Acss2","Adamts17","Eno3","Prxl2a","Sh3pxd2a","Slc27a4","Ubr4")
+
+#may need to make a lookup table containing Gene name and Ensembl ID (mgi_symbol) columns
+#can easily be done with biomart
+
+conversion_map <- setNames(gene_info$ensembl_gene_id, gene_info$mgi_symbol)
+converted_vector <- conversion_map[hscr_genes]
+hscr_table <- results_df[results_df$gene_id %in% converted_vector, ]
+reverse_map <- setNames(names(converted_vector), converted_vector)
+hscr_table$gene_name <- reverse_map[hscr_table$gene_id]
+
+hscr_constant<-hscr_table[hscr_table$peak_id %in% rownames(atac_constant),]
+hscr_temporal<-hscr_table[hscr_table$peak_id %in% rownames(atac_temporal),]
+
+#make constant and temporal tables
+gene_counts_table_constant <- hscr_constant %>%
+  # Filter the rows to include only your target genes
+  filter(gene_name %in% hscr_genes) %>%
+  
+  # Group the data by the column containing the gene name
+  group_by(gene_name) %>%
+  
+  # Count the number of rows in each group
+  summarize(Count = n())
+
+#merge
+merged_df <- full_join(
+  gene_counts_table_constant,
+  gene_counts_table_temporal,
+  by = "gene_name")
+
+merged_df<-merged_df %>% mutate(Total_Count = Count.x + Count.y)
+merged_df<-merged_df %>% mutate(`% Temporal` = (Count.y / Total_Count) * 100,`% Constant` = (Count.x / Total_Count) * 100)
+
+#ggplot scatterplot for 24 hscr genes % of Temporal Peaks
+
+ggplot(merged_df, aes(x = `% Temporal`, y = `% Constant`)) + geom_point(alpha = 0.7, size = 3) +
+  geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "gray50") + geom_text_repel(aes(label = gene_name), hjust=1, vjust=.5,force=2, max.overlaps = 20) +
+  xlim(0, 100) +
+  ylim(0, 100) +
+  labs(
+    title = "Percentage of Constant vs. Temporal ATAC-seq Peaks per Gene",
+    x = "% of Peaks that are Temporal",
+    y = "% of Peaks that are Constant") +
+  # Apply a clean theme and add a grid
+  theme_minimal() +
+  theme(panel.grid.minor = element_blank())
+
