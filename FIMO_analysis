@@ -1,0 +1,74 @@
+#for FIMO
+#subset chr start stop from atac_data for select peaks
+#hscr_constant obtained from subsetting all hscr gene ~ peaks pairs using temporal gene list
+#can obviously repeat this with temporal genes etc...
+
+result <- atac_data[atac_data$name %in% hscr_constant$peak_id, 1:3]
+write.table(result, file = "~/Desktop/temporal_lmmsig.bed",sep='\t',col.names = FALSE,row.names = FALSE,quote=FALSE)
+
+#RUN FIMO python scripts using pipeline on big purple, see FIMO_pipeline
+
+#From FIMO output
+library(tidyverse)
+temporal_data <- read_tsv("~/Desktop/temporal_peaks_enrichment.all_tfs.txt")
+constant_data <- read_tsv("~/Desktop/constant_peak_enrichment.all_tfs.txt")
+
+#make gene names all match mouse format
+temporal_data$TF_Name<-stringr::str_to_sentence(temporal_data$TF_Name)
+constant_data$TF_Name<-stringr::str_to_sentence(constant_data_data$TF_Name)
+
+#filter peaks that aren't expressed in RNA 
+#note merged_data has temporal RNA ENSM IDs and gene_symbols present, may have to make
+
+match_indices <- match(temporal_data$TF_Name, merged_data$mgi_symbol)
+temporal_data$filtered<-merged_data$mgi_symbol[match_indices]
+temporal_data_filtered <- subset(temporal_data, subset = !is.na(filtered))
+
+#constant filter
+match_indices <- match(constant_data$TF_Name, merged_data$mgi_symbol)
+constant_data$filtered<-merged_data$mgi_symbol[match_indices]
+constant_data_filtered<-subset(constant_data, subset = !is.na(filtered))
+
+#summarize features of interested
+temporal_summary <- temporal_data_filtered %>% count(Family, name = "Count") %>% mutate(Proportion = Count / sum(Count), Condition = "Temporal")
+constant_summary <- constant_data_filtered %>% count(Family, name = "Count") %>% mutate(Proportion = Count / sum(Count), Condition = "Constant")
+
+#bind constant and temporal
+combined_data <- bind_rows(temporal_summary, constant_summary)
+
+#sort and format for plots
+sorting_order <- combined_data %>% dplyr::select(Family, Condition, Proportion) %>%pivot_wider(names_from = Condition,values_from = Proportion,values_fill = 0) %>% arrange(desc(Constant)) %>% pull(Family) 
+plot_data <- combined_data %>% mutate(Family = factor(Family, levels = rev(sorting_order)))
+
+comparison_data <- combined_data %>% dplyr::select(Family, Condition, Proportion) %>% pivot_wider(names_from = Condition, values_from = Proportion, values_fill = 0)
+
+# Identify families enriched in Temporal (Temporal > Constant)
+#note flip the filter below to switch temporal and constant
+enriched_in_temporal <- comparison_data %>%
+    filter(Temporal > Constant) %>%
+    arrange(Constant) %>% # Optional: sort by Temporal abundance instead of Constant
+    pull(Family)
+
+# Filter the main plotting data to only include these families
+# and set the factor levels so they sort correctly in the plot
+filtered_plot_data <- combined_data %>% filter(Family %in% enriched_in_temporal) %>% mutate(Family = factor(Family, levels = enriched_in_temporal))
+
+
+ggplot(filtered_plot_data, aes(x = Proportion, y = Family, fill = Condition)) +
+  geom_col(position = "dodge") +
+  scale_fill_manual(values = c("Constant" = "#80B9C8", "Temporal" = "#E57B62")) +
+  labs(
+    title = "TF Families Enriched in Temporal Peaks",
+    x = "Proportion",
+    y = "TF Family"
+  ) +
+  theme_bw() +
+  theme(
+    legend.position = c(0.7, 0.2),
+    legend.title = element_text(face = "bold"),
+    legend.background = element_blank(),
+    panel.grid.major.y = element_line(color = "grey90"),
+    panel.grid.minor.y = element_blank(),
+    panel.grid.major.x = element_line(color = "grey90"),
+    panel.grid.minor.x = element_line(color = "grey90"),
+    axis.text.y = element_text(size = 9))
