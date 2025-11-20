@@ -1,0 +1,171 @@
+
+###Pearson Correlation Calculation###
+#only useful if ATAC-seq and RNA-seq are paired from same biological sample. Otherwise, test is invalid.
+
+#load R libraries
+library(GenomicRanges)
+library(TxDb.Mmusculus.UCSC.mm10.knownGene)
+library(org.Mm.eg.db)
+library(biomaRt)
+library(dplyr)
+library(progress)
+
+
+#see data directory for example data format
+deseq_data<-read.csv("~/Desktop/RNA_norm_counts.csv")
+rna_data<-read.csv("~/Desktop/RNA_norm_counts.csv",row.names=1)
+
+#add chr start stop to RNA genes with biomart
+
+my_ensmusg_ids<-deseq_data$name
+ensembl_mm10 <- useEnsembl(biomart = "ensembl",dataset = "mmusculus_gene_ensembl",version = 102)
+gene_info <- getBM(
+  attributes = c("ensembl_gene_id", "chromosome_name", "start_position", "end_position", "strand","mgi_symbol"),
+  filters = "ensembl_gene_id",
+  values = my_ensmusg_ids,
+  mart = ensembl_mm10)
+
+merged_data <- merge(gene_info,deseq_data, by.x = "ensembl_gene_id", by.y = "name")
+merged_data$strand <- ifelse(merged_data$strand == 1, "+", "-")
+merged_data$chromosome_name<- paste0("chr", merged_data$chromosome_name)
+
+#make granges object
+gr_object <- makeGRangesFromDataFrame(merged_data,keep.extra.columns = TRUE,seqnames.field = "chromosome_name",start.field = "start_position",end.field = "end_position",strand.field = "strand")
+
+
+#see data directory for formats
+
+atac_data<-read.csv("~/Desktop/ATAC_normalized_counts_matrix.csv")
+atac_data_nochr<-read.csv("~/Desktop/ATAC_no_chr_matrix.csv",row.names = 1)
+gr_object2 <- makeGRangesFromDataFrame(atac_data,keep.extra.columns = TRUE,seqnames.field = "chr",start.field = "start",end.field = "end",strand.field = "strand")
+
+#overlap RNA genes with ATAC-seq peaks within n base pairs
+
+overlaps <- findOverlaps(gr_object2, gr_object, maxgap = 99999)
+overlapping_peak_ids <- mcols(gr_object2[queryHits(overlaps)])[["name"]]
+overlapping_gene_ids <- mcols(gr_object[subjectHits(overlaps)])[["ensembl_gene_id"]]
+
+#error check before running pairs_to_correlate
+if (!identical(colnames(rna_data), colnames(atac_data_nochr))) {
+  # Attempt to reorder columns if names match but order differs
+  if(all(sort(colnames(rna_data)) == sort(colnames(atac_data_nochr)))) {
+    warning("Column names match but order differs. Reordering ATAC columns to match RNA columns.")
+    atac_data <- atac_data_nochr[, colnames(rna_data)]
+    if (!identical(colnames(rna_data), colnames(atac_data_nochr))) {
+      stop("Automatic reordering failed. Manually ensure column order is identical.")
+    }
+  } else {
+    stop("Sample names (columns) in RNA and ATAC matrices do not match!")
+  }
+}
+
+#function to calculate pearson across all peak/gene correlations
+pairs_to_correlate <- data.frame(
+  gene_id = overlapping_gene_ids,
+  peak_id = overlapping_peak_ids,
+  stringsAsFactors = FALSE
+)
+correlation_results <- list()
+
+#add a progress bar to monitor progress, may take 20+ minutes on 16GB machine
+
+pb <- progress_bar$new(
+  format = " Calculating correlations [:bar] :percent eta: :eta", # Customize the look
+  total = nrow(pairs_to_correlate),    # Total number of iterations
+  clear = FALSE,                       # Don't clear the bar on completion
+  width = 60                           # Width of the progress bar
+)
+
+# --- Loop through pairs ---
+for (i in 1:nrow(pairs_to_correlate)) {
+  
+  # ---> ADD THIS LINE at the beginning of the iteration <---
+  # It's often better to tick at the start or end, let's put it here for now.
+  # If the loop iteration fails/skips, it still progresses.
+  pb$tick() 
+  
+  gene_id <- pairs_to_correlate$gene_id[i]
+  peak_id <- pairs_to_correlate$peak_id[i]
+  
+  # --- ID Check ---
+  gene_exists <- gene_id %in% rownames(rna_data)
+  peak_exists <- peak_id %in% rownames(atac_data_nochr) # Using your variable name
+  
+  if (!gene_exists || !peak_exists) {
+    # warning(...) # Keep warnings if you want, but they might clutter the progress bar
+    correlation_results[[i]] <- list(gene_id = gene_id, peak_id = peak_id, correlation = NA, p.value = NA, error = "ID not in matrix")
+    next # Skip to the next iteration
+  }
+  
+  # --- Vector Extraction ---
+  gene_vec <- as.numeric(rna_data[gene_id, ])
+  peak_vec <- as.numeric(atac_data_nochr[peak_id, ]) # Using your variable name
+  
+  # --- Validity Check (Length >= 3, Variance > 0, NAs) ---
+  num_samples <- length(gene_vec)
+  gene_sd <- sd(gene_vec, na.rm = TRUE)
+  peak_sd <- sd(peak_vec, na.rm = TRUE)
+  valid_pairs <- sum(complete.cases(gene_vec, peak_vec)) 
+  
+  # Check sd returns NA if input has zero non-NA values after na.rm
+  if (num_samples < 2 || valid_pairs < 2 || is.na(gene_sd) || is.na(peak_sd) || gene_sd == 0 || peak_sd == 0) {
+    error_msg <- paste0("Zero variance or < 3 valid samples") 
+    # You could add more detail here again if needed for debugging NA sources
+    correlation_results[[i]] <- list(gene_id = gene_id, peak_id = peak_id, correlation = NA, p.value = NA, error = error_msg)
+    next 
+  }
+  
+  # --- Calculate Correlation ---
+  cor_test_result <- tryCatch({
+    cor.test(gene_vec, peak_vec, method = "pearson")
+  }, error = function(e) {
+    # warning(...) # Optional warning
+    return(NULL) 
+  })
+  
+  # --- Store Result ---
+  if (!is.null(cor_test_result)) {
+    correlation_results[[i]] <- list(
+      gene_id = gene_id,
+      peak_id = peak_id,
+      correlation = cor_test_result$estimate,
+      p.value = cor_test_result$p.value,
+      error = NA 
+    )
+  } else {
+    correlation_results[[i]] <- list(gene_id = gene_id, peak_id = peak_id, correlation = NA, p.value = NA, error = "cor.test failed")
+  }
+}
+
+#output
+results_df <- bind_rows(correlation_results)
+
+#BH correct
+results_df$padj <- p.adjust(results_df$p.value, method = "BH")
+
+#filter for p<.05 and cleanup a bit
+results_df<-results_df[,-5]
+significant_results_df <- results_df[results_df$padj < 0.05 & !is.na(results_df$padj), ]
+
+#save
+write.csv(results_df, "~/Desktop/gene_peak_pearson_cor.csv")
+
+#filter temporal peaks and genes
+atac_temporal<-read.csv("~/Desktop/2_25_25_atac_annotation.csv",header=TRUE)
+rna_temporal<-read.csv("~/Desktop/temporal_genes.csv",header = TRUE)
+
+peak_list <- unique(atac_temporal$newname)
+gene_list <- unique(rna_temporal$gene_name)
+
+#filter out temporal peaks with above list
+filtered_df <- significant_results_df %>%
+  filter(peak_id %in% peak_list) %>%
+  filter(gene_id %in% gene_list)
+
+#save
+write.csv(filtered_df, "~/Desktop/temporal_gene_peak_pearson_cor.csv")
+
+
+
+
+
