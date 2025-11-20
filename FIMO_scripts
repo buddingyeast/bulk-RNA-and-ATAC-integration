@@ -1,7 +1,7 @@
 ###3 seperate SLURM scripts for deltaSVM package used to generate FIMO analysis
 #need to add methods used to generate some of the files/scripts below, but these are currently housed in a directory
 
-#python scripts
+#executables and python files, also hosted on GIT
 
 cp /gpfs/data/chaklab/home/chubah01/2025/ATACseq/gkmPipeline/gkm-pipeline/lsgkm/src/gkmpredict .
 cp /gpfs/data/chaklab/home/chubah01/2025/ATACseq/gkmPipeline/gkm-pipeline/lsgkm/src/gkmtrain .
