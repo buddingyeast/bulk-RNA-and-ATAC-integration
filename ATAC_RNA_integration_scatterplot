@@ -1,0 +1,135 @@
+####Functions to plot scatter plots of ATAC peaks for HSCR genes in which  Pearson Correlation was significant#####
+
+#load stuff
+library(ggplot2)
+library(dplyr)
+library(patchwork)
+
+
+plot_correlations_for_genes <- function(target_gene_list,
+                                        rna_matrix,
+                                        atac_matrix,
+                                        results_summary,
+                                        p_value_cutoff) {
+  
+  # --- 1. Find all pairs to plot ---
+  pairs_to_plot <- results_summary %>%
+    filter(
+      gene_id %in% target_gene_list,  # Filter for genes in your list
+      padj <= p_value_cutoff,     # Filter by significance
+      !is.na(p.value)                # Ensure we skip NAs
+    )
+  
+  if (nrow(pairs_to_plot) == 0) {
+    message("No significant pairs found for the given genes at p < ", p_value_cutoff)
+    return(invisible(list())) # Return an empty list
+  }
+  
+  message("Found ", nrow(pairs_to_plot), " significant pairs to plot.")
+  
+  # --- 2. Create an empty list to store plots ---
+  plot_list <- list()
+  
+  # --- 3. Loop through each pair and create a plot ---
+  for (i in 1:nrow(pairs_to_plot)) {
+    
+    current_pair <- pairs_to_plot[i, ]
+    
+    # Generate the plot using the original function
+    # (Assumes 'plot_correlation_scatter' is loaded in your environment)
+    p <- plot_correlation_scatter(
+      target_gene_id = current_pair$gene_id,
+      target_peak_id = current_pair$peak_id,
+      rna_matrix = rna_matrix,
+      atac_matrix = atac_matrix,
+      results_summary = results_summary
+    )
+    
+    # Create a unique name for the plot in the list
+    plot_name <- paste(current_pair$gene_id, current_pair$peak_id, sep = "_vs_")
+    
+    # Store the plot in the list
+    plot_list[[plot_name]] <- p
+  }
+  
+  #make grid of plots
+  message("Combining ", length(plot_list), " plots into a 5-column grid...")
+  combined_grid <- patchwork::wrap_plots(plot_list) + 
+  patchwork::plot_layout(ncol = 4)
+  
+  return(combined_grid)
+}
+
+
+#above function requires this sub function to plot
+
+plot_correlation_scatter <- function(target_gene_id, 
+                                     target_peak_id, 
+                                     rna_matrix, 
+                                     atac_matrix, 
+                                     results_summary) {
+  
+  # --- 1. Extract the specific data vectors ---
+  # These are the same vectors your loop used (gene_vec, peak_vec)
+  gene_vec <- as.numeric(rna_matrix[target_gene_id, ])
+  peak_vec <- as.numeric(atac_matrix[target_peak_id, ])
+  
+  # Check if data extraction worked
+  if (is.null(gene_vec) || is.null(peak_vec)) {
+    stop("Could not find one or both IDs in the provided matrices.")
+  }
+  
+  # --- 2. Create a data frame for plotting ---
+  plot_data <- data.frame(
+    RNA_Counts = gene_vec,
+    ATAC_Counts = peak_vec
+  )
+  
+  # --- 3. Get the pre-calculated correlation stats ---
+  stats <- results_summary %>%
+    filter(gene_id == target_gene_id, peak_id == target_peak_id)
+  
+  # Initialize empty strings
+  r_val_text <- ""
+  p_val_text <- ""
+  
+  if (nrow(stats) == 1 && !is.na(stats$correlation)) {
+    # Format the R and p-value for the plot label
+    r_val_text <- paste0("R = ", round(stats$correlation, 3))
+    p_val_text <- paste0("p = ", format.pval(stats$padj, digits = 2, eps = 0.001))
+  } else {
+    # Handle cases where stats might be missing (e.g., if you plot a pair that failed)
+    r_val_text <- "R = NA"
+    p_val_text <- "p = NA"
+  }
+  
+  # Combine into a single label
+  plot_label <- paste(r_val_text, p_val_text, sep = "\n")
+  
+  # --- 4. Create the ggplot ---
+  p <- ggplot(plot_data, aes(x = RNA_Counts, y = ATAC_Counts)) +
+    geom_point(size = 2, alpha = 0.8) +
+    # This overlays the linear model regression line
+    geom_smooth(method = "lm", se = FALSE, color = "blue", formula = 'y ~ x') +
+    # This adds the R and p-value text to the plot
+    # Places text in the top-left corner
+    annotate(
+      geom = "text",
+      x = -Inf,
+      y = Inf,
+      label = plot_label,
+      hjust = -0.1, # Adjust to move right from the edge
+      vjust = 1.1   # Adjust to move down from the edge
+    ) +
+    labs(
+      title = paste(target_gene_id, "vs.", target_peak_id),
+      x = "RNA-seq Norm. Counts",
+      y = "ATAC-seq Norm. Counts"
+    ) +
+    theme_bw()+theme(
+    axis.title.x = element_text(size = 8),
+    axis.title.y = element_text(size = 8),
+    plot.title = element_text(size = 8))
+  
+  return(p)
+}
