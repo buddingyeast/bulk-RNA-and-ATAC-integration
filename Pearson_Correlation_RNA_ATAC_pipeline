@@ -151,8 +151,8 @@ significant_results_df <- results_df[results_df$padj < 0.05 & !is.na(results_df$
 write.csv(results_df, "~/Desktop/gene_peak_pearson_cor.csv")
 
 #filter temporal peaks and genes
-atac_temporal<-read.csv("~/Desktop/2_25_25_atac_annotation.csv",header=TRUE)
-rna_temporal<-read.csv("~/Desktop/temporal_genes.csv",header = TRUE)
+atac_temporal<-read.csv("~/Desktop/Temporal_peaks_annotated.csv",header=TRUE)
+rna_temporal<-read.csv("~/Desktop/RNA_temporal_genes.csv",header = TRUE)
 
 peak_list <- unique(atac_temporal$newname)
 gene_list <- unique(rna_temporal$gene_name)
