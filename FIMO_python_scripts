@@ -1,0 +1,111 @@
+###3 seperate SLURM scripts for deltaSVM package used to generate FIMO analysis
+#need to add methods used to generate some of the files/scripts below, but these are currently housed in a directory
+
+#python scripts
+
+cp /gpfs/data/chaklab/home/chubah01/2025/ATACseq/gkmPipeline/gkm-pipeline/lsgkm/src/gkmpredict .
+cp /gpfs/data/chaklab/home/chubah01/2025/ATACseq/gkmPipeline/gkm-pipeline/lsgkm/src/gkmtrain .
+cp /gpfs/data/chaklab/home/chubah01/2025/ATACseq/gkmPipeline/gkm-pipeline/workflow/scripts/count_kmers_per_motif.py .
+
+#JASPAR TF database
+cp -r /gpfs/data/chaklab/home/chubah01/2025/ATACseq/gkmPipeline/gkm-pipeline/data/tf_database .
+
+#list of all possible 11mers, presumably length of a TF binding site (major groove), can use other kmer
+cp /gpfs/data/chaklab/home/chubah01/2025/ATACseq/gkmPipeline/gkm-pipeline/data/kmers/11mers.fa .
+
+#reference genome
+cp /gpfs/data/chaklab/home/chubah01/2025/ATACseq/gkmPipeline/mm10.fa .
+
+#referene genome index
+cp /gpfs/data/chaklab/home/chubah01/2025/ATACseq/gkmPipeline/mm10.fa.fai .
+
+#use bedtools with a bedfile (chr start stop) and reference file to extract DNA sequences
+
+bedtools getfasta -fi mm10.fa -bed temporal_lmmsig.bed -fo temporallmm_positive.fa
+
+#use shuffle to create a set of random negative peaks for background
+#note that you may wish to use temporal vs constant instead etc...
+
+bedtools shuffle -i temporal_lmmsig.bed -g mm10.genome -excl temporal_lmmsig.bed > temporallmmnegative.bed
+
+#python environment yml script
+cp /gpfs/data/chaklab/home/chubah01/2025/ATACseq/gkmPipeline/gkm-pipeline/environment.yml .
+
+#activate environment
+conda activate gkm-pipeline
+
+#run scripts below with sbatch command
+
+#cat train.sh
+
+#!/bin/bash
+#SBATCH --job-name=gkmtrain
+#SBATCH --output=gkmtrain_%j.out
+#SBATCH --error=gkmtrain_%j.err
+#SBATCH --time=8:00:00
+#SBATCH --partition=cpu_medium
+#SBATCH --cpus-per-task=8
+#SBATCH --mem=64G
+
+
+cd /gpfs/scratch/finer03/FIMO/
+
+source /gpfs/share/apps/anaconda3/gpu/5.2.0/envs/mamba/etc/profile.d/conda.sh
+
+conda activate gkm-pipeline
+
+#./gkmtrain temporal_peaks_positive.fa temporal_peaks_negative.fa temporal_peaks_trained_model
+
+#./gkmtrain constant_peaks_positive.fa constant_peaks_negative.fa constant_peaks_trained_model
+
+./gkmtrain temporallmm_positive.fa constant_peaks_positive.fa test_model
+
+#cat predict.sh
+
+#!/bin/bash
+#SBATCH --job-name=gkmtrain
+#SBATCH --output=gkmpredict_%j.out
+#SBATCH --error=gkmpredict_%j.err
+#SBATCH --time=4:00:00
+#SBATCH --partition=cpu_medium
+#SBATCH --cpus-per-task=8
+#SBATCH --mem=64G
+
+cd /gpfs/scratch/finer03/FIMO/
+
+source /gpfs/share/apps/anaconda3/gpu/5.2.0/envs/mamba/etc/profile.d/conda.sh
+
+conda activate gkm-pipeline
+
+#./gkmpredict ./11mers.fa ./temporal_peaks_trained_model.model.txt ./temporal_peaks_11mers_scores.txt
+
+#./gkmpredict ./11mers.fa ./constant_peaks_trained_model.model.txt ./constant_peaks_11mers_scores.txt
+
+./gkmpredict ./11mers.fa ./test_model.model.txt ./test_11mers_scores.txt
+
+#cat count.sh
+
+#!/bin/bash
+#SBATCH --job-name=gkmtrain
+#SBATCH --output=gkmcount_%j.out
+#SBATCH --error=gkmcount_%j.err
+#SBATCH --time=2:00:00
+#SBATCH --partition=cpu_medium
+#SBATCH --cpus-per-task=8
+#SBATCH --mem=32G
+
+cd /gpfs/scratch/finer03/FIMO/
+
+source /gpfs/share/apps/anaconda3/gpu/5.2.0/envs/mamba/etc/profile.d/conda.sh
+
+conda activate gkm-pipeline
+
+module load python
+
+#python ./count_kmers_per_motif.py ./temporal_hscr_11mers_scores.txt ./tf_database/JASPAR2022_CORE_vertebrates_non-redunda$
+
+#python ./count_kmers_per_motif.py ./constant_hscr_11mers_scores.txt ./tf_database/JASPAR2022_CORE_vertebrates_non-redunda$
+
+python ./count_kmers_per_motif.py ./test_11mers_scores.txt ./tf_database/JASPAR2022_CORE_vertebrates_non-redundant_pfms_me$
+
+
