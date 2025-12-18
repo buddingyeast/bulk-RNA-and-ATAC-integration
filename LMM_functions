@@ -8,6 +8,7 @@ library(furrr) #to parrallelerize
 plan(multisession, workers = 8)
 library(tidyr)
 library(dplyr)
+library(lmerTest)
 
 #hscr_table is dataframe of Gene ~ Peak Pairs, see pearson correlation pipeline
 #output is the variable final_results_df
