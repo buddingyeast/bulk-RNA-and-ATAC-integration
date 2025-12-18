@@ -112,10 +112,8 @@ create_lmm_data <- function(target_gene_id, target_peak_id, rna_matrix, atac_mat
   # --- 2. Extract Data Vectors ---
   
   # Get the row of 12 values for the target gene
-  gene_vec <- rna_matrix[target_gene_id, ]
-  
-  # Get the row of 12 values for the target peak
-  peak_vec <- atac_matrix[target_peak_id, ]
+  gene_vec <- as.numeric(unlist(rna_matrix[target_gene_id, ]))
+  peak_vec <- as.numeric(unlist(atac_matrix[target_peak_id, ]))
   
   
   # --- 3. Validation ---
@@ -134,8 +132,8 @@ create_lmm_data <- function(target_gene_id, target_peak_id, rna_matrix, atac_mat
   long_df <- data.frame(
     Time = as.factor(timepoints),       # Set as factor for the LMM random effect
     Replicate = as.factor(replicates), # Also a good idea to factor
-    RNA_Value = as.numeric(gene_vec),
-    ATAC_Value = as.numeric(peak_vec)
+    RNA_Value = gene_vec,
+    ATAC_Value = peak_vec
   )
   
   return(long_df)
