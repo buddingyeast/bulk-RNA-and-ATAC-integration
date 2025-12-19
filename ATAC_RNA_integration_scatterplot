@@ -5,6 +5,8 @@ library(ggplot2)
 library(dplyr)
 library(patchwork)
 
+#target gene list from final_results_df
+target_list <- as.character(head(unique(final_results_df$gene_id), 18))
 
 plot_correlations_for_genes <- function(target_gene_list,
                                         rna_matrix,
