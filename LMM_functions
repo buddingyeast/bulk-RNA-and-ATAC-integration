@@ -38,6 +38,8 @@ final_results_df <- results_with_lmm %>%
 
 #adjust pvalue after running function below
 final_results_df$padj <- p.adjust(final_results_df$p.value, method = "BH")
+final_results_df <- final_results_df %>%left_join(results_df %>% select(gene_id, peak_id, correlation), by = c("gene_id", "peak_id"))
+
 
 # --- 6. Shut Down Parallel Workers ---
 plan(sequential)
