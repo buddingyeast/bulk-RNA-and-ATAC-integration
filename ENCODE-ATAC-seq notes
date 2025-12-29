@@ -1,0 +1,90 @@
+#download ENCODE atac-seq pipeline
+git clone https://github.com/ENCODE-DCC/atac-seq-pipeline
+
+#make custom tsv file
+#didn't work, works fine with default hg38 settings
+ref_fa  /gpfs/scratch/finer03/atac-seq-pipeline/output/bowtie2_index/mm39.fa
+ref_mito_fa     /gpfs/scratch/finer03/atac-seq-pipeline/output/mm39.chrM.fa
+mito_chr_name   chrM
+regex_bfilt_peak_chr_name	chr[\dWZ]+
+chrsz   /gpfs/scratch/finer03/atac-seq-pipeline/output/mm39.chrom.sizes
+gensz   2727508308
+bowtie2_idx_tar /gpfs/scratch/finer03/atac-seq-pipeline/output/bowtie2_index/mm39.tar.gz
+bowtie2_mito_idx_tar    /gpfs/scratch/finer03/atac-seq-pipeline/output/bowtie2_index/chrM.tar.gz
+
+#can make custom references using their build_genome_data.sh pipeline or premade on e.g. hg38
+#just need fasta file for genome plus seperate fasta file for chrM (mitochondria)
+#note that this mm39 include hRET locus within ROSA26 and is not default reference
+#the bowtie files are bowtie2 indexed files e.g. *.bt2 compressed into tarball
+#gensz is size of genome
+
+#edit json file
+#example below
+{
+    "atac.title" : "Example (paired end)",
+    "atac.description" : "This is a template input JSON for paired ended sample.",
+
+    "atac.pipeline_type" : "atac",
+    "atac.align_only" : false,
+    "atac.true_rep_only" : false,
+
+    "atac.genome_tsv" : "/gpfs/scratch/finer03/atac-seq-pipeline/mm39.tsv",
+
+    "atac.paired_end" : true,
+
+    "atac.fastqs_rep1_R1" : [ "/gpfs/scratch/finer03/atac-seq-pipeline/fastq/Hom-hRET_E1_S19_L005_R1_001.fastq.gz" ],
+    "atac.fastqs_rep1_R2" : [ "/gpfs/scratch/finer03/atac-seq-pipeline/fastq/Hom-hRET_E1_S19_L005_R2_001.fastq.gz" ],
+    "atac.fastqs_rep2_R1" : [ "/gpfs/scratch/finer03/atac-seq-pipeline/fastq/Hom-hRET_F1_S20_L005_R1_001.fastq.gz" ],
+    "atac.fastqs_rep2_R2" : [ "/gpfs/scratch/finer03/atac-seq-pipeline/fastq/Hom-hRET_F1_S20_L005_R1_001.fastq.gz" ],
+
+    "atac.auto_detect_adapter" : true,
+    "atac.multimapping" : 4
+}
+
+#login to compute node 
+srun --nodes=1 --ntasks=1 --partition=cpu_medium --mem=64G --time=12:00:00 --pty bas
+
+#load caper
+module load condaenvs/new/caper
+
+#load correct java version
+module load jdk/17u028
+
+#run job via caper (cromwell wrapper)
+caper hpc submit /gpfs/scratch/finer03/atac-seq-pipeline/atac.wdl -i /gpfs/scratch/finer03/atac-seq-pipeline/example_input_json/template.json --singularity --leader-job-name encode_qc_testrun --backend slurm
+
+
+#couldn't get the above to run for custom genome, ran manual pipeline instead for initial qc, #note that it works for Hg38 preset
+#there were no adapters in the files, so ran bowtie to align
+srun --time=6:00:00 bowtie2 --local --very-sensitive --no-mixed --no-discordant -X 700 -x ../output/bowtie2_index/mm39 -1 Hom-hRET_E1_S19_L005_R1_001.fastq.gz -2 Hom-hRET_E1_S19_L005_R2_001.fastq.gz | samtools view -bS - > RepE1.bam &
+
+#samtools sort and index
+srun --time=2:00:00 --mem=32G samtools sort RepE1.bam -o RepE1_sorted.bam & 
+
+srun --time=2:00:00 --mem=32G samtools index RepE1_sorted.bam & 
+
+#get mito %
+srun --time=2:00:00 --mem=32G samtools idxstats RepE1_sorted.bam > RepE1_sorted.idxstats
+
+#use number of second column to get number of mapped reads to charm
+grep "chrM" RepE1_sorted.idxstats
+
+srun --time=2:00:00 --mem=32G samtools flagstat RepE1_sorted.bam > RepE1_sorted.flagstat &
+
+#use this to get total number of mapped reads and calculate % mapped to mito with number from column 2
+
+head RepE1_sorted.flagstat 
+
+#3.17% for RepE, 4.35% for RepF
+
+#remove Mito reads
+srun --time=2:00:00 --mem=32G samtools view -h RepE1_sorted.bam | grep -v chrM | samtools sort -O bam -o RepE1.rmChrM.bam -T .
+
+#mark duplicates, will require Picard tools jar, can't get hpc module to work
+srun --time=2:00:00 --mem=32G java -jar ./picard.jar MarkDuplicates QUIET=true INPUT=RepE1.header.bam OUTPUT=RepE1.marked.bam METRICS_FILE=RepE1.dup.metrics REMOVE_DUPLICATES=false CREATE_INDEX=true VALIDATION_STRINGENCY=LENIENT TMP_DIR=.
+
+#may need to re-add headers
+srun --time=2:00:00 --mem=32G java -jar ./picard.jar AddOrReplaceReadGroups I=RepE1.rmChrM.bam O=RepE1.header.bam RGID=2 RGLB=Atac RGPL=ILLUMINA RGPU=1 RGSM=E1
+
+# filter out reads that multi-map and duplicates
+ srun --time=2:00:00 --mem=32G samtools view -h -b -f 2 -F 1548 -q 30 RepE1.marked.bam | samtools sort -o RepE1.filtered.bam 
