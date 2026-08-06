@@ -2,6 +2,21 @@
 #scripts to plot number of temporal peaks vs total peaks as a scatterplot
 #plotting script can be modified to plot temporal vs. constant
 
+library(TxDb.Mmusculus.UCSC.mm10.knownGene)
+library(org.Mm.eg.db)
+library(biomaRt)
+library(dplyr)
+
+#load normalized RNA counts file with "name" column for gene names
+deseq_data <- read.csv("D:/Rebecca_paper/pearson integration/RNA_norm_counts.csv")
+my_ensmusg_ids<-deseq_data$name
+ensembl_mm10 <- useEnsembl(biomart = "ensembl",dataset = "mmusculus_gene_ensembl",version = 102)
+gene_info <- getBM(
+  attributes = c("ensembl_gene_id", "chromosome_name", "start_position", "end_position", "strand","mgi_symbol"),
+  filters = "ensembl_gene_id",
+  values = my_ensmusg_ids,
+  mart = ensembl_mm10)
+
 ####splitting constant and temporal peaks###
 temporal_peaks <- atac_temporal$newname
 atac_temporal <- atac_data_nochr[rownames(atac_data_nochr) %in% temporal_peaks, ]
