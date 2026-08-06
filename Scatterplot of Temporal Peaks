@@ -6,6 +6,7 @@ library(TxDb.Mmusculus.UCSC.mm10.knownGene)
 library(org.Mm.eg.db)
 library(biomaRt)
 library(dplyr)
+library(ggplot2)
 
 #load normalized RNA counts file with "name" column for gene names
 deseq_data <- read.csv("D:/Rebecca_paper/pearson integration/RNA_norm_counts.csv")
