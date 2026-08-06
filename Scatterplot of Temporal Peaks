@@ -49,6 +49,16 @@ gene_counts_table_constant <- hscr_constant %>%
   # Count the number of rows in each group
   summarize(Count = n())
 
+gene_counts_table_temporal <- hscr_temporal %>%
+  # Filter the rows to include only your target genes
+  filter(gene_name %in% hscr_genes) %>%
+  
+  # Group the data by the column containing the gene name
+  group_by(gene_name) %>%
+  
+  # Count the number of rows in each group
+  summarize(Count = n())
+
 #merge
 merged_df <- full_join(
   gene_counts_table_constant,
