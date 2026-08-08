@@ -19,6 +19,10 @@ cp /gpfs/data/chaklab/home/chubah01/2025/ATACseq/gkmPipeline/mm10.fa .
 #referene genome index
 cp /gpfs/data/chaklab/home/chubah01/2025/ATACseq/gkmPipeline/mm10.fa.fai .
 
+#generate chromosome sizes file
+
+cut -f1,2 mm10.fa.fai > mm10.genome
+
 #use bedtools with a bedfile (chr start stop) and reference file to extract DNA sequences
 
 bedtools getfasta -fi mm10.fa -bed temporal_lmmsig.bed -fo temporallmm_positive.fa
