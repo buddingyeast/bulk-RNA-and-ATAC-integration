@@ -35,6 +35,31 @@ bedtools shuffle -i temporal_lmmsig.bed -g mm10.genome -excl temporal_lmmsig.bed
 #put this bed file through mm10 to generate fa file
 bedtools getfasta -fi mm10.fa -bed temporallmmnegative.bed -fo temporal_peaks_negative.fa
 
+#remove any new shuffled sequences that contain N strings. 
+awk '
+  /^>/ {
+    if (seq != "" && seq !~ /N/) {
+      print header
+      print seq
+    }
+    header=$0
+    seq=""
+    next
+  }
+  {
+    seq = seq $0
+  }
+  END {
+    if (seq != "" && seq !~ /N/) {
+      print header
+      print seq
+    }
+  }
+' temporal_peaks_negative.fa > temporal_peaks_negative_noN.fa
+
+#rename negative peaks
+mv temporal_peaks_negative_noN.fa temporal_peaks_negative.fa
+
 #python environment yml script
 cp /gpfs/data/chaklab/home/chubah01/2025/ATACseq/gkmPipeline/gkm-pipeline/environment.yml .
 
