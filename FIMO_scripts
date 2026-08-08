@@ -32,6 +32,9 @@ bedtools getfasta -fi mm10.fa -bed temporal_lmmsig.bed -fo temporallmm_positive.
 
 bedtools shuffle -i temporal_lmmsig.bed -g mm10.genome -excl temporal_lmmsig.bed > temporallmmnegative.bed
 
+#put this bed file through mm10 to generate fa file
+bedtools getfasta -fi mm10.fa -bed temporallmmnegative.bed -fo temporal_peaks_negative.fa
+
 #python environment yml script
 cp /gpfs/data/chaklab/home/chubah01/2025/ATACseq/gkmPipeline/gkm-pipeline/environment.yml .
 
