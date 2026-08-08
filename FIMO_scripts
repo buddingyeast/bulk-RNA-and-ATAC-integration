@@ -109,9 +109,9 @@ conda activate gkm-pipeline
 
 module load python
 
-#python ./count_kmers_per_motif.py ./temporal_hscr_11mers_scores.txt ./tf_database/JASPAR2022_CORE_vertebrates_non-redundant_pfms_meme.11_9mers.fimo.txt.gz temporal_peaks_enrichment 0.05 2.0 0.05 0.05 ./tf_database/TF_metadata.txt
+#python ./count_kmers_per_motif.py ./temporal_peaks_11mers_scores.txt ./tf_database/JASPAR2022_CORE_vertebrates_non-redundant_pfms_meme.11_9mers.fimo.txt.gz temporal_peaks_enrichment 0.05 2.0 0.05 0.05 ./tf_database/TF_metadata.txt
 
-#python ./count_kmers_per_motif.py ./constant_hscr_11mers_scores.txt ./tf_database/JASPAR2022_CORE_vertebrates_non-redundant_pfms_meme.11_9mers.fimo.txt.gz constant_peak_enrichment 0.05 2.0 0.05 0.05 ./tf_database/TF_metadata.txt
+#python ./count_kmers_per_motif.py ./constant_peaks_11mers_scores.txt ./tf_database/JASPAR2022_CORE_vertebrates_non-redundant_pfms_meme.11_9mers.fimo.txt.gz constant_peak_enrichment 0.05 2.0 0.05 0.05 ./tf_database/TF_metadata.txt
 
 python ./count_kmers_per_motif.py ./test_11mers_scores.txt ./tf_database/JASPAR2022_CORE_vertebrates_non-redundant_pfms_meme.11_9mers.fimo.txt.gz test_enrichment 0.05 2.0 0.05 0.05 ./tf_database/TF_metadata.txt
 
