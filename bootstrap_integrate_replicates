@@ -96,11 +96,9 @@ generate_all_trajectories <- function(
   # E14.5_R1
   # E14.5_R2...
 
-
   if (length(values) != 12) {
     stop("Expected exactly 12 values.")
   }
-
 
   ############################
   # Convert 12 values into
@@ -722,7 +720,7 @@ summary(
 
 plan(sequential)
 
-#####final table filtering for robust peaks#####
+#####summary table filtering for robust peaks#####
 final_results_df %>%
   summarise(
     total_pairs = n(),
@@ -752,4 +750,25 @@ final_results_df %>%
 
     FDR_05 =
       sum(padj < 0.05, na.rm = TRUE)
+  )
+
+
+####extracting robust and strong peaks#####
+strong_robust_candidates %>%
+  select(
+    gene_id,
+    peak_id,
+    mean_timepoint_r,
+    replicate_median_r,
+    replicate_q025_r,
+    replicate_q975_r,
+    prop_same_direction,
+    prop_abs_r_ge_0.8,
+    prop_abs_r_ge_0.9,
+    p.value,
+    padj
+  ) %>%
+  arrange(
+    desc(prop_abs_r_ge_0.9),
+    desc(abs(mean_timepoint_r))
   )
