@@ -76,48 +76,35 @@ create_rna_atac_timepoint_data <- function(
       "P7",
       "P21",
       "Adult"
-    ),
-    each = 2
-  )
+    ),each = 2)
 
   # Extract RNA values for target gene
   gene_vec <- as.numeric(
-    unlist(rna_matrix[target_gene_id, ])
-  )
-
+    unlist(rna_matrix[target_gene_id, ]))
 
   # Extract ATAC values for target peak
   peak_vec <- as.numeric(
-    unlist(atac_matrix[target_peak_id, ])
-  )
+    unlist(atac_matrix[target_peak_id, ]))
 
   if (length(gene_vec) != 12) {
     stop(
       paste(
         "RNA data does not contain 12 observations for:",
-        target_gene_id
-      )
-    )
-  }
+        target_gene_id))}
   
   if (length(peak_vec) != 12) {
     stop(
       paste(
         "ATAC data does not contain 12 observations for:",
-        target_peak_id
-      )
-    )
-  }
+        target_peak_id))}
 
   rna_df <- data.frame(
     Time = timepoints,
-    RNA_Value = gene_vec
-  )
+    RNA_Value = gene_vec)
 
   atac_df <- data.frame(
     Time = timepoints,
-    ATAC_Value = peak_vec
-  )
+    ATAC_Value = peak_vec)
 
   rna_summary <- rna_df %>%
     group_by(Time) %>%
@@ -126,8 +113,7 @@ create_rna_atac_timepoint_data <- function(
         RNA_Value,
         na.rm = TRUE
       ),
-      .groups = "drop"
-    )
+      .groups = "drop")
 
   atac_summary <- atac_df %>%
     group_by(Time) %>%
@@ -136,14 +122,12 @@ create_rna_atac_timepoint_data <- function(
         ATAC_Value,
         na.rm = TRUE
       ),
-      .groups = "drop"
-    )
+      .groups = "drop")
 
   final_df <- left_join(
     rna_summary,
     atac_summary,
-    by = "Time"
-  )
+    by = "Time")
 
 ############################
 # Preserve biological order
@@ -157,9 +141,7 @@ create_rna_atac_timepoint_data <- function(
       "P0",
       "P7",
       "P21",
-      "Adult"
-    )
-  )
+      "Adult"))
 
   final_df <- final_df %>%
     arrange(Time)
@@ -194,10 +176,7 @@ exact_permutation_cor <- function(
       cor(
         rna,
         atac[idx],
-        method = "pearson"
-      )
-    }
-  )
+        method = "pearson")})
 
   # Two-sided exact permutation P-value
   p_perm <- mean(
@@ -208,9 +187,7 @@ exact_permutation_cor <- function(
     list(
       correlation = observed_r,
       p.value = p_perm
-    )
-  )
-}
+    ))}
 
 ############################
 # 5. Function to analyze one
@@ -236,8 +213,7 @@ run_model_for_pair <- function(
       target_gene_id = target_gene_id,
       target_peak_id = target_peak_id,
       rna_matrix = rna_matrix,
-      atac_matrix = atac_matrix
-    )
+      atac_matrix = atac_matrix)
 
     ############################
     # Remove incomplete values
@@ -246,14 +222,11 @@ run_model_for_pair <- function(
     df <- df %>%
       filter(
         is.finite(RNA_Mean),
-        is.finite(ATAC_Mean)
-      )
+        is.finite(ATAC_Mean))
 
     # Require all six developmental timepoints
     if (nrow(df) != 6) {
-      stop(
-        "Expected six complete developmental timepoints."
-      )
+      stop("Expected six complete developmental timepoints.")
     }
 
     ############################
@@ -263,8 +236,7 @@ run_model_for_pair <- function(
     perm_result <- exact_permutation_cor(
       rna = df$RNA_Mean,
       atac = df$ATAC_Mean,
-      perms = perms
-    )
+      perms = perms)
 
     ############################
     # Linear regression
@@ -272,13 +244,10 @@ run_model_for_pair <- function(
 
     fit <- lm(
       RNA_Mean ~ ATAC_Mean,
-      data = df
-    )
-
+      data = df)
 
     slope <- unname(
-      coef(fit)["ATAC_Mean"]
-    )
+      coef(fit)["ATAC_Mean"])
 
     ############################
     # Return results
@@ -299,13 +268,9 @@ run_model_for_pair <- function(
       Estimate = NA,
       correlation = NA,
       p.value = NA
-    )
+    )})
 
-  })
-
-
-  return(result)
-}
+  return(result)}
 
 
 ############################
@@ -315,25 +280,15 @@ run_model_for_pair <- function(
 
 results_with_perm <- hscr_table[, 1:2] %>%
   mutate(
-
     perm_results = future_map2(
-
       .x = gene_id,
       .y = peak_id,
-
       .f = ~ run_model_for_pair(
-
         target_gene_id = .x,
         target_peak_id = .y,
-
         rna_matrix = rna_data,
         atac_matrix = atac_data_nochr,
-
-        perms = perms_6
-
-      )
-    )
-  )
+        perms = perms_6)))
 
 ############################
 # 7. Consolidate results
@@ -352,9 +307,7 @@ final_results_df <- final_results_df %>%
 
     padj = p.adjust(
       p.value,
-      method = "BH"
-    )
-  )
+      method = "BH"))
 
 ############################
 # 9. Optional:
@@ -364,8 +317,7 @@ final_results_df <- final_results_df %>%
 significant_pairs <- final_results_df %>%
   filter(
     !is.na(padj),
-    padj < 0.05
-  )
+    padj < 0.05)
 
 ############################
 # 10. Shut down parallel
@@ -373,7 +325,6 @@ significant_pairs <- final_results_df %>%
 ############################
 
 plan(sequential)
-
 
 ############################
 # 11. Inspect results
