@@ -135,3 +135,231 @@ plot_correlation_scatter <- function(target_gene_id,
   
   return(p)
 }
+
+
+###plotting scatterplox for strong_robust_candidates###
+
+library(ggplot2)
+library(dplyr)
+library(patchwork)
+
+############################################################
+# Plot ONE strong/robust peak-gene correlation
+############################################################
+
+plot_correlation_scatter <- function(target_gene_id, 
+                                     target_peak_id, 
+                                     rna_matrix, 
+                                     atac_matrix, 
+                                     results_summary) {
+  
+  # Check that IDs exist
+  if (!(target_gene_id %in% rownames(rna_matrix))) {
+    stop("Gene not found in RNA matrix: ", target_gene_id)
+  }
+  
+  if (!(target_peak_id %in% rownames(atac_matrix))) {
+    stop("Peak not found in ATAC matrix: ", target_peak_id)
+  }
+  
+  # Extract RNA and ATAC values
+  gene_vec <- as.numeric(rna_matrix[target_gene_id, ])
+  peak_vec <- as.numeric(atac_matrix[target_peak_id, ])
+  
+  # Make sure vectors have the same number of samples
+  if (length(gene_vec) != length(peak_vec)) {
+    stop("RNA and ATAC matrices contain different numbers of samples.")
+  }
+   
+  # Dataframe for plotting
+  plot_data <- data.frame(
+    RNA_Counts = gene_vec,
+    ATAC_Counts = peak_vec)
+  
+  # Pull the statistics for this exact peak-gene pair
+  stats <- results_summary %>%
+    filter(
+      gene_id == target_gene_id,
+      peak_id == target_peak_id
+    ) %>%
+    slice(1)
+  
+  
+  # Get correlation value
+  if (nrow(stats) == 1 && !is.na(stats$correlation)) {
+    
+    r_val_text <- paste0(
+      "R = ",
+      round(stats$correlation, 3))
+    
+  } else {
+    r_val_text <- "R = NA"
+  }
+  
+  # Add adjusted p-value if it exists
+  if ("padj" %in% colnames(stats) &&
+      nrow(stats) == 1 &&
+      !is.na(stats$padj)) {
+    
+    p_val_text <- paste0(
+      "adj. p = ",
+      format.pval(
+        stats$padj,
+        digits = 2,
+        eps = 0.001
+      )
+    )
+    
+    plot_label <- paste(
+      r_val_text,
+      p_val_text,
+      sep = "\n"
+    )
+    
+  } else { 
+    plot_label <- r_val_text
+    }
+  
+  # Make plot
+  p <- ggplot(
+    plot_data,
+    aes(
+      x = RNA_Counts,
+      y = ATAC_Counts
+    )
+  ) +
+    
+    geom_point(
+      size = 2.5,
+      alpha = 0.8
+    ) +
+    
+    geom_smooth(
+      method = "lm",
+      se = FALSE,
+      color = "blue",
+      formula = y ~ x
+    ) +
+    
+    annotate(
+      geom = "text",
+      x = -Inf,
+      y = Inf,
+      label = plot_label,
+      hjust = -0.1,
+      vjust = 1.1,
+      size = 3
+    ) +
+    
+    labs(
+      title = paste0(
+        target_gene_id,
+        "\n",
+        target_peak_id
+      ),
+      x = "RNA-seq Norm. Counts",
+      y = "ATAC-seq Norm. Counts"
+    ) +
+    theme_bw() +
+    theme(
+      axis.title.x = element_text(size = 8),
+      axis.title.y = element_text(size = 8),
+      axis.text.x = element_text(size = 7),
+      axis.text.y = element_text(size = 7),
+      plot.title = element_text(
+        size = 8,
+        face = "bold",
+        hjust = 0.5
+      ),
+      panel.grid.minor = element_blank())
+    
+  return(p)
+}
+
+############################################################
+# Plot MULTIPLE strong/robust peak-gene correlations
+############################################################
+
+plot_strong_robust_candidates <- function(strong_robust_candidates,
+                                          rna_matrix,
+                                          atac_matrix,
+                                          target_gene_list = NULL,
+                                          ncol = 4) {
+  
+  # Start with the strong/robust dataframe itself
+  pairs_to_plot <- strong_robust_candidates
+
+  # Optional: restrict plotting to selected genes
+  if (!is.null(target_gene_list)) {
+    
+    pairs_to_plot <- pairs_to_plot %>%
+      filter(gene_id %in% target_gene_list) 
+  }
+  
+  # Remove any accidental duplicate gene-peak pairs
+  pairs_to_plot <- pairs_to_plot %>%
+    distinct(
+      gene_id,
+      peak_id,
+      .keep_all = TRUE)
+  
+  if (nrow(pairs_to_plot) == 0) {
+    message("No strong/robust peak-gene pairs found.")
+    return(invisible(NULL))}
+
+  message(
+    "Plotting ",
+    nrow(pairs_to_plot),
+    " strong/robust peak-gene pairs across ",
+    length(unique(pairs_to_plot$gene_id)),
+    " genes.")
+  
+  # Empty list for plots
+  plot_list <- list()
+  
+  
+  # Loop through every strong/robust pair
+  for (i in seq_len(nrow(pairs_to_plot))) {
+    
+    current_gene <- as.character(
+      pairs_to_plot$gene_id[i])
+    
+    current_peak <- as.character(
+      pairs_to_plot$peak_id[i])
+    
+    p <- plot_correlation_scatter(
+      target_gene_id = current_gene,
+      target_peak_id = current_peak,
+      rna_matrix = rna_matrix,
+      atac_matrix = atac_matrix,
+      results_summary = strong_robust_candidates)
+    
+    plot_name <- paste(
+      current_gene,
+      current_peak,
+      sep = "_vs_")
+    plot_list[[plot_name]] <- p
+    }
+  
+  # Combine into grid
+  combined_grid <- patchwork::wrap_plots(
+    plot_list,
+    ncol = ncol)
+   
+  return(combined_grid)}
+
+
+
+############################################################
+# EXAMPLE 1:
+# Plot ALL strong/robust temporal peak-gene pairs
+############################################################
+
+all_strong_robust_plots <- plot_strong_robust_candidates(
+  strong_robust_candidates = strong_robust_candidates,
+  rna_matrix = rna_matrix,
+  atac_matrix = atac_matrix,
+  target_gene_list = NULL,
+  ncol = 4)
+
+all_strong_robust_plots
