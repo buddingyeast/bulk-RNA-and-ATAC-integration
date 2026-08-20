@@ -502,14 +502,19 @@ plot_peak_gene <- function(
   # ========================================================
   # D. Plot genome coordinate label
   # ========================================================
-  plotGenomeLabel(params = params,x = 0.5,y = 3.35,
-    length = 6.5,default.units = "inches")
+  plotGenomeLabel(params = params,x = 0.5,y = 3.35,length = 6.5,default.units = "inches")
 
-  pdf("D:/Rebecca_Paper/HSCR_strong_robust_peak_gene_interactions.pdf",width = 7.5,height = 4)
+  pdf("D:/Rebecca_Paper/HSCR_strong_robust_peak_gene_interactions.pdf", width = 7.5, height = 4)
+
   genes_to_plot <- unique(strong_robust_candidates$gene_id)
 
-  for (gene in genes_to_plot) {
-  plot_peak_gene(gene)}
-  dev.off()
+for (gene in genes_to_plot) {
+  # Wrapping each in tryCatch prevents a single failing gene from 
+  # crashing the batch generation mid-way through.
+  try({
+    plot_peak_gene(gene)
+  }, silent = FALSE)
+}
 
+dev.off()
 
