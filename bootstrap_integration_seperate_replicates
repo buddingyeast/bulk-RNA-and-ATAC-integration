@@ -1,0 +1,723 @@
+############################################################
+# REPLICATE-ROBUSTNESS ANALYSIS FOR RNA-seq / ATAC-seq
+#
+# Experimental design:
+# - 6 developmental timepoints
+# - 2 biological RNA-seq replicates per timepoint
+# - 2 biological ATAC-seq replicates per timepoint
+# - RNA and ATAC were NOT measured from the same mice
+#
+# Purpose:
+# For each gene-peak pair:
+#
+# 1. Generate every possible RNA replicate trajectory:
+#       2^6 = 64 trajectories
+#
+# 2. Generate every possible ATAC replicate trajectory:
+#       2^6 = 64 trajectories
+#
+# 3. Compare every RNA trajectory with every ATAC trajectory:
+#       64 x 64 = 4,096 correlations
+#
+# IMPORTANT:
+# These 4,096 correlations are NOT 4,096 independent samples.
+# They are used to measure robustness to biological replicate
+# selection, NOT to artificially increase statistical power.
+#
+# The analysis returns:
+# - correlation of the 6 developmental timepoint means
+# - mean/median replicate-combination correlation
+# - 2.5th and 97.5th percentiles
+# - proportion positive / negative
+# - proportion |r| >= 0.8
+# - proportion |r| >= 0.9
+# - proportion with same direction as mean correlation
+############################################################
+
+
+############################
+# 1. Load packages
+############################
+
+library(dplyr)
+library(tidyr)
+library(purrr)
+library(furrr)
+
+############################
+# 2. Set up parallel workers
+############################
+
+plan(multisession, workers = 8)
+
+############################
+# 3. Generate all 64 possible
+#    replicate-selection patterns
+############################
+
+# Each row represents one possible choice of R1/R2
+# across the 6 developmental timepoints.
+#
+# Example:
+# 1 1 1 1 1 1
+# 1 1 1 1 1 2
+# ...
+# 2 2 2 2 2 2
+
+replicate_choices <- expand.grid(
+  rep(
+    list(c(1, 2)),
+    6
+  )
+)
+
+replicate_choices <- as.matrix(replicate_choices)
+
+# Confirm that there are 64 possible trajectories
+stopifnot(nrow(replicate_choices) == 64)
+
+
+############################
+# 4. Function to generate all
+#    64 trajectories for one
+#    RNA gene or ATAC peak
+############################
+
+generate_all_trajectories <- function(
+    values,
+    replicate_choices
+) {
+
+  # Expected input:
+  #
+  # values =
+  # E12.5_R1
+  # E12.5_R2
+  # E14.5_R1
+  # E14.5_R2...
+
+
+  if (length(values) != 12) {
+    stop("Expected exactly 12 values.")
+  }
+
+
+  ############################
+  # Convert 12 values into
+  # 6 timepoints x 2 replicates
+  ############################
+
+  value_matrix <- matrix(
+    values,
+    nrow = 6,
+    ncol = 2,
+    byrow = TRUE
+  )
+
+
+  ############################
+  # Construct all 64 possible
+  # developmental trajectories
+  ############################
+
+  trajectories <- t(
+    apply(
+      replicate_choices,
+      1,
+      function(choice) {
+
+        value_matrix[
+          cbind(
+            1:6,
+            choice
+          )
+        ]
+
+      }
+    )
+  )
+
+
+  # Rows = 64 possible trajectories
+  # Columns = 6 developmental timepoints
+
+  return(trajectories)
+}
+
+
+############################
+# 5. Function to analyze one
+#    gene-peak pair
+############################
+
+run_replicate_robustness <- function(
+    target_gene_id,
+    target_peak_id,
+    rna_matrix,
+    atac_matrix,
+    replicate_choices
+) {
+
+  result <- tryCatch({
+
+    ############################
+    # Extract the 12 RNA values
+    ############################
+
+    rna_values <- as.numeric(
+      unlist(
+        rna_matrix[
+          target_gene_id,
+          ]
+      )
+    )
+
+
+    ############################
+    # Extract the 12 ATAC values
+    ############################
+
+    atac_values <- as.numeric(
+      unlist(
+        atac_matrix[
+          target_peak_id,
+          ]
+      )
+    )
+
+
+    ############################
+    # Validate
+    ############################
+
+    if (length(rna_values) != 12) {
+      stop(
+        paste(
+          "RNA gene does not have 12 observations:",
+          target_gene_id
+        )
+      )
+    }
+
+
+    if (length(atac_values) != 12) {
+      stop(
+        paste(
+          "ATAC peak does not have 12 observations:",
+          target_peak_id
+        )
+      )
+    }
+
+
+    if (
+      any(!is.finite(rna_values)) ||
+      any(!is.finite(atac_values))
+    ) {
+
+      stop("Missing or non-finite values detected.")
+
+    }
+
+
+    ############################
+    # Reshape data:
+    # 6 timepoints x 2 replicates
+    ############################
+
+    rna_matrix_6x2 <- matrix(
+      rna_values,
+      nrow = 6,
+      ncol = 2,
+      byrow = TRUE
+    )
+
+
+    atac_matrix_6x2 <- matrix(
+      atac_values,
+      nrow = 6,
+      ncol = 2,
+      byrow = TRUE
+    )
+
+
+    ############################
+    # Calculate correlation
+    # using the mean at each
+    # developmental timepoint
+    ############################
+
+    rna_means <- rowMeans(
+      rna_matrix_6x2
+    )
+
+    atac_means <- rowMeans(
+      atac_matrix_6x2
+    )
+
+
+    mean_correlation <- suppressWarnings(
+      cor(
+        rna_means,
+        atac_means,
+        method = "pearson"
+      )
+    )
+
+
+    ############################
+    # Generate all 64 possible
+    # RNA trajectories
+    ############################
+
+    rna_trajectories <- generate_all_trajectories(
+      values = rna_values,
+      replicate_choices = replicate_choices
+    )
+
+
+    ############################
+    # Generate all 64 possible
+    # ATAC trajectories
+    ############################
+
+    atac_trajectories <- generate_all_trajectories(
+      values = atac_values,
+      replicate_choices = replicate_choices
+    )
+
+    replicate_correlations <- numeric(
+      nrow(rna_trajectories) *
+      nrow(atac_trajectories)
+    )
+
+    counter <- 1
+
+    for (
+      i in seq_len(
+        nrow(rna_trajectories)
+      )
+    ) {
+
+      for (
+        j in seq_len(
+          nrow(atac_trajectories)
+        )
+      ) {
+
+        replicate_correlations[counter] <-
+          suppressWarnings(
+            cor(
+              rna_trajectories[i, ],
+              atac_trajectories[j, ],
+              method = "pearson"
+            )
+          )
+        counter <- counter + 1
+      }
+    }
+    ############################
+    # Remove any undefined
+    # correlations
+    ############################
+
+    replicate_correlations <-
+      replicate_correlations[
+        is.finite(
+          replicate_correlations
+        )
+      ]
+
+    if (
+      length(
+        replicate_correlations
+      ) == 0
+    ) {
+
+      stop(
+        "No valid replicate correlations."
+      )
+    }
+
+    ############################
+    # Summary statistics
+    ############################
+
+    mean_r <- mean(
+      replicate_correlations
+    )
+
+    median_r <- median(
+      replicate_correlations
+    )
+
+    q025_r <- unname(
+      quantile(
+        replicate_correlations,
+        probs = 0.025,
+        na.rm = TRUE
+      )
+    )
+
+    q975_r <- unname(
+      quantile(
+        replicate_correlations,
+        probs = 0.975,
+        na.rm = TRUE
+      )
+    )
+
+    ############################
+    # Direction consistency
+    ############################
+
+    prop_positive <- mean(
+      replicate_correlations > 0
+    )
+
+    prop_negative <- mean(
+      replicate_correlations < 0
+    )
+
+    ############################
+    # Strength consistency
+    ############################
+
+    prop_abs_r_ge_0.8 <- mean(
+      abs(
+        replicate_correlations
+      ) >= 0.8
+    )
+
+    prop_abs_r_ge_0.9 <- mean(
+      abs(
+        replicate_correlations
+      ) >= 0.9
+    )
+
+    ############################
+    # How often does replicate
+    # sampling preserve the
+    # direction of the correlation
+    # observed using the means?
+    ############################
+
+    if (
+      is.finite(
+        mean_correlation
+      ) &&
+      mean_correlation > 0
+    ) {
+
+      prop_same_direction <- mean(
+        replicate_correlations > 0
+      )
+
+    } else if (
+      is.finite(
+        mean_correlation
+      ) &&
+      mean_correlation < 0
+    ) {
+
+      prop_same_direction <- mean(
+        replicate_correlations < 0
+      )
+
+    } else {
+
+      prop_same_direction <- NA_real_
+
+    }
+
+    ############################
+    # Return results
+    ############################
+
+    data.frame(
+
+      gene_id = target_gene_id,
+
+      peak_id = target_peak_id,
+
+      mean_timepoint_r =
+        mean_correlation,
+
+      replicate_mean_r =
+        mean_r,
+
+      replicate_median_r =
+        median_r,
+
+      replicate_q025_r =
+        q025_r,
+
+      replicate_q975_r =
+        q975_r,
+
+      prop_positive =
+        prop_positive,
+
+      prop_negative =
+        prop_negative,
+
+      prop_abs_r_ge_0.8 =
+        prop_abs_r_ge_0.8,
+
+      prop_abs_r_ge_0.9 =
+        prop_abs_r_ge_0.9,
+
+      prop_same_direction =
+        prop_same_direction,
+
+      n_combinations =
+        length(
+          replicate_correlations
+        )
+
+    )
+
+
+  },
+
+  error = function(e) {
+
+    data.frame(
+
+      gene_id =
+        target_gene_id,
+
+      peak_id =
+        target_peak_id,
+
+      mean_timepoint_r =
+        NA_real_,
+
+      replicate_mean_r =
+        NA_real_,
+
+      replicate_median_r =
+        NA_real_,
+
+      replicate_q025_r =
+        NA_real_,
+
+      replicate_q975_r =
+        NA_real_,
+
+      prop_positive =
+        NA_real_,
+
+      prop_negative =
+        NA_real_,
+
+      prop_abs_r_ge_0.8 =
+        NA_real_,
+
+      prop_abs_r_ge_0.9 =
+        NA_real_,
+
+      prop_same_direction =
+        NA_real_,
+
+      n_combinations =
+        NA_integer_
+
+    )
+
+  })
+
+
+  return(result)
+}
+
+############################################################
+# 6. Run all 1,022 gene-peak pairs in parallel
+############################################################
+
+robustness_results <- future_map2_dfr(
+
+  .x = hscr_table$gene_id,
+
+  .y = hscr_table$peak_id,
+
+  .f = ~ run_replicate_robustness(
+
+    target_gene_id = .x,
+
+    target_peak_id = .y,
+
+    rna_matrix = rna_data,
+
+    atac_matrix = atac_data_nochr,
+
+    replicate_choices =
+      replicate_choices
+
+  )
+)
+############################################################
+# 7. Join robustness results onto your existing
+#    permutation-test results
+############################################################
+
+final_results_df <- final_results_df %>%
+
+  left_join(
+
+    robustness_results,
+
+    by = c(
+      "gene_id",
+      "peak_id"
+    )
+
+  )
+
+############################################################
+# 8. OPTIONAL:
+#    Create useful robustness categories
+############################################################
+
+final_results_df <- final_results_df %>%
+
+  mutate(
+
+    robust_direction =
+      prop_same_direction >= 0.95,
+
+    robust_r_08 =
+      prop_abs_r_ge_0.8 >= 0.80,
+
+    robust_r_09 =
+      prop_abs_r_ge_0.9 >= 0.80
+
+  )
+
+############################################################
+# 9. Identify especially strong candidate relationships
+#
+# IMPORTANT:
+# These are candidate-selection criteria, NOT additional
+# statistical significance tests.
+############################################################
+
+strong_robust_candidates <- final_results_df %>%
+
+  filter(
+
+    abs(
+      mean_timepoint_r
+    ) >= 0.9,
+
+    prop_same_direction >= 0.95,
+
+    prop_abs_r_ge_0.8 >= 0.80
+
+  ) %>%
+
+  arrange(
+    desc(
+      abs(
+        mean_timepoint_r
+      )
+    )
+  )
+
+
+############################################################
+# 10. Inspect results
+############################################################
+
+# Total number of robust candidates
+
+nrow(
+  strong_robust_candidates
+)
+
+
+# View strongest candidates
+
+strong_robust_candidates %>%
+
+  select(
+
+    gene_id,
+
+    peak_id,
+
+    mean_timepoint_r,
+
+    p.value,
+
+    padj,
+
+    replicate_median_r,
+
+    replicate_q025_r,
+
+    replicate_q975_r,
+
+    prop_same_direction,
+
+    prop_abs_r_ge_0.8,
+
+    prop_abs_r_ge_0.9
+
+  ) %>%
+
+  head(30)
+
+
+############################################################
+# 11. Examine all 121+ high-correlation peaks
+############################################################
+
+high_correlation_peaks <- final_results_df %>%
+
+  filter(
+    abs(
+      mean_timepoint_r
+    ) >= 0.9
+  ) %>%
+
+  arrange(
+    desc(
+      prop_same_direction
+    ),
+    desc(
+      prop_abs_r_ge_0.8
+    )
+  )
+
+
+# How many r >= 0.9 relationships remain highly
+# robust to replicate selection?
+
+table(
+  high_correlation_peaks$prop_same_direction >= 0.95
+)
+
+table(
+  high_correlation_peaks$prop_abs_r_ge_0.8 >= 0.80
+)
+
+############################################################
+# 12. Summarize robustness
+############################################################
+
+summary(
+  final_results_df$prop_same_direction
+)
+summary(
+  final_results_df$prop_abs_r_ge_0.8
+)
+summary(
+  final_results_df$replicate_median_r
+)
+
+############################################################
+# 13. Shut down parallel workers
+############################################################
+
+plan(sequential)
