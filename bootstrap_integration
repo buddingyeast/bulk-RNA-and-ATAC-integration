@@ -1,0 +1,389 @@
+############################################################
+# RNA-seq / ATAC-seq Temporal Correlation Permutation Analysis
+#
+# Design:
+# - 6 developmental timepoints
+# - 2 biological replicates per timepoint for RNA-seq
+# - 2 biological replicates per timepoint for ATAC-seq
+# - RNA and ATAC samples are NOT from the same individual mice
+#
+# Therefore:
+# - Replicates are averaged within each modality/timepoint
+# - RNA and ATAC are paired only by developmental timepoint
+# - Association is tested across the 6 developmental timepoints
+# - Exact permutation test uses all 6! = 720 permutations
+# - Gene-peak pairs are analyzed in parallel
+############################################################
+
+
+############################
+# 1. Load packages
+############################
+
+library(dplyr)
+library(tidyr)
+library(furrr)
+library(gtools)
+
+# Set number of parallel workers
+plan(multisession, workers = 8)
+
+
+############################
+# 2. Generate all possible
+#    permutations ONCE
+############################
+
+# There are 6! = 720 possible arrangements of the
+# six developmental timepoints.
+
+perms_6 <- permutations(
+  n = 6,
+  r = 6,
+  v = 1:6
+)
+
+
+############################
+# 3. Function to create
+#    timepoint-level data
+############################
+
+create_rna_atac_timepoint_data <- function(
+    target_gene_id,
+    target_peak_id,
+    rna_matrix,
+    atac_matrix
+) {
+
+  # IMPORTANT:
+  # This assumes both RNA and ATAC matrices contain
+  # 12 columns arranged as:
+  #
+  # E12.5_rep1
+  # E12.5_rep2
+  # E14.5_rep1
+  # E14.5_rep2....
+  #
+  # RNA replicate 1 and ATAC replicate 1 DO NOT need
+  # to come from the same mouse.
+
+  timepoints <- rep(
+    c(
+      "E12.5",
+      "E14.5",
+      "P0",
+      "P7",
+      "P21",
+      "Adult"
+    ),
+    each = 2
+  )
+
+  # Extract RNA values for target gene
+  gene_vec <- as.numeric(
+    unlist(rna_matrix[target_gene_id, ])
+  )
+
+
+  # Extract ATAC values for target peak
+  peak_vec <- as.numeric(
+    unlist(atac_matrix[target_peak_id, ])
+  )
+
+  if (length(gene_vec) != 12) {
+    stop(
+      paste(
+        "RNA data does not contain 12 observations for:",
+        target_gene_id
+      )
+    )
+  }
+  
+  if (length(peak_vec) != 12) {
+    stop(
+      paste(
+        "ATAC data does not contain 12 observations for:",
+        target_peak_id
+      )
+    )
+  }
+
+  rna_df <- data.frame(
+    Time = timepoints,
+    RNA_Value = gene_vec
+  )
+
+  atac_df <- data.frame(
+    Time = timepoints,
+    ATAC_Value = peak_vec
+  )
+
+  rna_summary <- rna_df %>%
+    group_by(Time) %>%
+    summarise(
+      RNA_Mean = mean(
+        RNA_Value,
+        na.rm = TRUE
+      ),
+      .groups = "drop"
+    )
+
+  atac_summary <- atac_df %>%
+    group_by(Time) %>%
+    summarise(
+      ATAC_Mean = mean(
+        ATAC_Value,
+        na.rm = TRUE
+      ),
+      .groups = "drop"
+    )
+
+  final_df <- left_join(
+    rna_summary,
+    atac_summary,
+    by = "Time"
+  )
+
+############################
+# Preserve biological order
+############################
+
+  final_df$Time <- factor(
+    final_df$Time,
+    levels = c(
+      "E12.5",
+      "E14.5",
+      "P0",
+      "P7",
+      "P21",
+      "Adult"
+    )
+  )
+
+  final_df <- final_df %>%
+    arrange(Time)
+
+  return(final_df)
+}
+
+############################
+# 4. Exact permutation test
+############################
+
+exact_permutation_cor <- function(
+    rna,
+    atac,
+    perms
+) {
+
+  # Observed Pearson correlation
+  observed_r <- cor(
+    rna,
+    atac,
+    method = "pearson"
+  )
+
+  # Calculate correlation for every possible
+  # rearrangement of ATAC developmental timepoints
+  permutation_r <- apply(
+    perms,
+    1,
+    function(idx) {
+
+      cor(
+        rna,
+        atac[idx],
+        method = "pearson"
+      )
+    }
+  )
+
+  # Two-sided exact permutation P-value
+  p_perm <- mean(
+    abs(permutation_r) >= abs(observed_r)
+  )
+
+  return(
+    list(
+      correlation = observed_r,
+      p.value = p_perm
+    )
+  )
+}
+
+############################
+# 5. Function to analyze one
+#    gene-peak pair
+############################
+
+run_model_for_pair <- function(
+    target_gene_id,
+    target_peak_id,
+    rna_matrix,
+    atac_matrix,
+    perms
+) {
+
+  result <- tryCatch({
+
+############################
+# Generate timepoint-level
+# RNA/ATAC values
+############################
+
+    df <- create_rna_atac_timepoint_data(
+      target_gene_id = target_gene_id,
+      target_peak_id = target_peak_id,
+      rna_matrix = rna_matrix,
+      atac_matrix = atac_matrix
+    )
+
+    ############################
+    # Remove incomplete values
+    ############################
+
+    df <- df %>%
+      filter(
+        is.finite(RNA_Mean),
+        is.finite(ATAC_Mean)
+      )
+
+    # Require all six developmental timepoints
+    if (nrow(df) != 6) {
+      stop(
+        "Expected six complete developmental timepoints."
+      )
+    }
+
+    ############################
+    # Exact permutation test
+    ############################
+
+    perm_result <- exact_permutation_cor(
+      rna = df$RNA_Mean,
+      atac = df$ATAC_Mean,
+      perms = perms
+    )
+
+    ############################
+    # Linear regression
+    ############################
+
+    fit <- lm(
+      RNA_Mean ~ ATAC_Mean,
+      data = df
+    )
+
+
+    slope <- unname(
+      coef(fit)["ATAC_Mean"]
+    )
+
+    ############################
+    # Return results
+    ############################
+
+    data.frame(
+      Estimate = slope,
+      correlation = perm_result$correlation,
+      p.value = perm_result$p.value
+    )
+
+  },
+
+  error = function(e) {
+
+    # Return NA if analysis fails
+    data.frame(
+      Estimate = NA,
+      correlation = NA,
+      p.value = NA
+    )
+
+  })
+
+
+  return(result)
+}
+
+
+############################
+# 6. Run all gene-peak pairs
+#    in parallel
+############################
+
+results_with_perm <- hscr_table[, 1:2] %>%
+  mutate(
+
+    perm_results = future_map2(
+
+      .x = gene_id,
+      .y = peak_id,
+
+      .f = ~ run_model_for_pair(
+
+        target_gene_id = .x,
+        target_peak_id = .y,
+
+        rna_matrix = rna_data,
+        atac_matrix = atac_data_nochr,
+
+        perms = perms_6
+
+      )
+    )
+  )
+
+############################
+# 7. Consolidate results
+############################
+
+final_results_df <- results_with_perm %>%
+  unnest(perm_results)
+
+############################
+# 8. Multiple-testing
+#    correction
+############################
+
+final_results_df <- final_results_df %>%
+  mutate(
+
+    padj = p.adjust(
+      p.value,
+      method = "BH"
+    )
+  )
+
+############################
+# 9. Optional:
+#    identify significant pairs
+############################
+
+significant_pairs <- final_results_df %>%
+  filter(
+    !is.na(padj),
+    padj < 0.05
+  )
+
+############################
+# 10. Shut down parallel
+#     workers
+############################
+
+plan(sequential)
+
+
+############################
+# 11. Inspect results
+############################
+
+head(final_results_df)
+
+# Number of significant gene-peak relationships
+nrow(significant_pairs)
+
+# Sort strongest associations first
+final_results_df <- final_results_df %>%
+  arrange(padj)
