@@ -221,6 +221,70 @@ library(grid)
 # ==========================================================
 # 1. Extract GRanges for candidate genes
 # ==========================================================
+strong_gene_ids <- unique(strong_robust_candidates$gene_id)
+
+matching_gene_indices <- match(
+  strong_gene_ids,
+  gr_object@elementMetadata@listData[["ensembl_gene_id"]])
+
+matching_gene_indices <- na.omit(matching_gene_indices)
+
+strong_genes_gr <- gr_object[matching_gene_indices]
+
+names(strong_genes_gr) <-
+  strong_genes_gr@elementMetadata@listData[["ensembl_gene_id"]]
+# ==========================================================
+# 2. Extract GRanges for candidate ATAC peaks
+# ==========================================================
+strong_peak_ids <- unique(strong_robust_candidates$peak_id)
+matching_peak_indices <- match(
+  strong_peak_ids,
+  gr_object2@elementMetadata@listData[["name"]])
+
+matching_peak_indices <- na.omit(matching_peak_indices)
+
+strong_peaks_gr <- gr_object2[matching_peak_indices]
+
+names(strong_peaks_gr) <-
+  strong_peaks_gr@elementMetadata@listData[["name"]]
+
+# ==========================================================
+# 3. Check that peak/gene IDs were successfully matched
+# ==========================================================
+cat(
+  "Candidate genes in dataframe:",
+  length(unique(strong_robust_candidates$gene_id)),"\n")
+
+cat("Candidate genes matched to GRanges:",
+  length(strong_genes_gr),"\n")
+
+cat(
+  "Candidate peaks in dataframe:",
+  length(unique(strong_robust_candidates$peak_id)),"\n")
+
+cat(
+  "Candidate peaks matched to GRanges:",
+  length(strong_peaks_gr),
+  "\n")
+
+# Report IDs that did not match, if any
+missing_genes <- setdiff(
+  unique(strong_robust_candidates$gene_id),
+  names(strong_genes_gr))
+
+missing_peaks <- setdiff(
+  unique(strong_robust_candidates$peak_id),
+  names(strong_peaks_gr))
+if (length(missing_genes) > 0) {
+
+  warning(
+    "The following gene IDs were not found in gr_object: ",
+    paste(missing_genes, collapse = ", "))}
+
+if (length(missing_peaks) > 0) {
+  warning(
+    "Some peak IDs were not found in gr_object2. Number missing: ",
+    length(missing_peaks))}
 
 # ==========================================================
 # 4. Function to plot one gene
