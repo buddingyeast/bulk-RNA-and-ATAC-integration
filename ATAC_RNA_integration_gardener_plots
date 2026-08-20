@@ -3,13 +3,9 @@
 #
 # INPUTS REQUIRED:
 #   strong_robust_candidates
-#       Must contain:
-#           gene_id
-#           peak_id
-#           r
-#
+#       Must contain:gene_id,peak_id,correlation
 #   gr_object
-#       Gene GRanges object containing "ensembl_gene_id"
+#       Gene Expression GRanges object containing "ensembl_gene_id"
 #
 #   gr_object2
 #       ATAC peak GRanges object containing "name"
@@ -111,6 +107,53 @@ if (length(missing_peaks) > 0) {
     length(missing_peaks))}
 
 # ==========================================================
+# Create GRanges for nonsignificant temporal peaks
+# ==========================================================
+
+# All temporal peaks from the original hscr_temporal dataframe
+all_temporal_peak_ids <- unique(hscr_temporal$peak_id)
+
+# Strong + robust peaks
+strong_peak_ids <- unique(
+  strong_robust_candidates$peak_id)
+
+# Temporal peaks that were NOT strong + robust
+nonsignificant_peak_ids <- setdiff(
+  all_temporal_peak_ids,
+  strong_peak_ids)
+
+# Match nonsignificant peaks to gr_object2
+matching_nonsig_peak_indices <- match(
+  nonsignificant_peak_ids,
+  gr_object2@elementMetadata@listData[["name"]])
+
+matching_nonsig_peak_indices <- na.omit(
+  matching_nonsig_peak_indices)
+
+# Create GRanges
+nonsignificant_peaks_gr <- gr_object2[
+  matching_nonsig_peak_indices]
+
+# Name by peak ID
+names(nonsignificant_peaks_gr) <-
+  nonsignificant_peaks_gr@elementMetadata@listData[["name"]]
+
+cat(
+  "Temporal peaks in hscr_temporal:",
+  length(all_temporal_peak_ids),
+  "\n")
+
+cat(
+  "Strong + robust peaks:",
+  length(strong_peak_ids),
+  "\n")
+
+cat(
+  "Nonsignificant temporal peaks:",
+  length(nonsignificant_peaks_gr),
+  "\n")
+
+# ==========================================================
 # 4. Function to plot one gene
 # ==========================================================
 plot_peak_gene <- function(
@@ -118,6 +161,7 @@ plot_peak_gene <- function(
     upstream = 150000,
     downstream = 350000
 ) {
+  
   # --------------------------------------------------------
   # Check target gene
   # --------------------------------------------------------
@@ -128,14 +172,12 @@ plot_peak_gene <- function(
         target_gene_id,
         "was not found among the strong/robust candidate genes."))
   }
-  
   # --------------------------------------------------------
   # Get target gene coordinates
   # --------------------------------------------------------
   target_gene <- strong_genes_gr[target_gene_id]
   plot_chrom <- as.character(seqnames(target_gene))[1]
   plot_center <- start(target_gene)[1]
-
   plot_start <- max(1, plot_center - upstream)
   plot_end <- plot_center + downstream
 
@@ -155,7 +197,16 @@ plot_peak_gene <- function(
     filter(
       gene_id == target_gene_id,
       peak_id %in% names(strong_peaks_gr))
+
+  # --------------------------------------------------------
+  # Get gene name
+  # --------------------------------------------------------
   gene_name <- unique(pairs_gene$gene_name)
+
+  if (length(gene_name) == 0 || is.na(gene_name[1])) {
+    gene_name <- target_gene_id
+  } else {
+    gene_name <- gene_name[1]}
 
   # --------------------------------------------------------
   # Define genomic region
@@ -167,19 +218,25 @@ plot_peak_gene <- function(
       end = plot_end))
 
   # --------------------------------------------------------
-  # Find candidate peaks in plotted region
+  # Find STRONG + ROBUST candidate peaks in plotted region
   # --------------------------------------------------------
   peaks_in_region <- subsetByOverlaps(
     strong_peaks_gr,
     region_gr)
 
   # --------------------------------------------------------
-  # Restrict peak-gene pairs to plotted region
+  # Find NONSIGNIFICANT temporal peaks in plotted region
+  # --------------------------------------------------------
+  nonpeaks_in_region <- subsetByOverlaps(
+    nonsignificant_peaks_gr,
+    region_gr)
+
+  # --------------------------------------------------------
+  # Restrict strong/robust peak-gene pairs to plotted region
   # --------------------------------------------------------
   pairs_in_region <- pairs_gene %>%
     filter(
       peak_id %in% names(peaks_in_region))
-
   # --------------------------------------------------------
   # Create plotting page (Fresh page per gene)
   # --------------------------------------------------------
@@ -193,8 +250,12 @@ plot_peak_gene <- function(
   # A. Plot peak-gene interaction arcs
   # ========================================================
   if (nrow(pairs_in_region) > 0) {
-    genes1 <- strong_genes_gr[pairs_in_region$gene_id]
-    peaks2 <- strong_peaks_gr[pairs_in_region$peak_id]
+    
+    genes1 <- strong_genes_gr[
+      pairs_in_region$gene_id]
+    
+    peaks2 <- strong_peaks_gr[
+      pairs_in_region$peak_id]
 
     bedpe_df <- data.frame(
       chrom1 = as.character(seqnames(genes1)),
@@ -207,13 +268,20 @@ plot_peak_gene <- function(
 
     scores <- pairs_in_region$correlation
     pal_fun <- colorRampPalette(rev(brewer.pal(11, "RdBu")))
-    arc_colors <- mapColors(scores, range = c(-1, 1), palette = pal_fun)
+    
+    arc_colors <- mapColors(
+      scores,
+      range = c(-1, 1),
+      palette = pal_fun)
 
     archplot <- plotPairsArches(
       data = bedpe_df,
       params = params,
-      x = 0.5, y = 0.65,zrange = c(-1, 1),
-      width = 6.5,height = 1.15,
+      x = 0.5,
+      y = 0.65,
+      zrange = c(-1, 1),
+      width = 6.5,
+      height = 1.15,
       default.units = "inches",
       just = c("left", "top"),
       fill = arc_colors,
@@ -221,8 +289,13 @@ plot_peak_gene <- function(
       lwd = 1.5,
       spaceHeight = 0.8)
 
+    # ------------------------------------------------------
+    # Correlation legend
+    # ------------------------------------------------------
     annoHeatmapLegend(
-      plot = archplot, x = 6.7, y = 0.75, 
+      plot = archplot,
+      x = 6.7,
+      y = 0.75, 
       width = unit(0.1, "inches"),
       height = unit(0.7, "inches"),
       just = c("left", "bottom"),
@@ -233,56 +306,115 @@ plot_peak_gene <- function(
       labels = c("-1", "1"),
       labeljust = c("left", "center"))
 
-    plotText( label = paste0(gene_name),x = 0.5, y = 0.25,fontsize = 8,fontface = "bold",just = c("left", "top"),default.units = "inches")
-  } 
+    # ------------------------------------------------------
+    # Gene name
+    # ------------------------------------------------------
+    plotText(
+      label = gene_name,
+      x = 0.5,
+      y = 0.25,
+      fontsize = 8,
+      fontface = "bold",
+      just = c("left", "top"),
+      default.units = "inches")
+  }
 
   # ========================================================
-  # B. Plot strong/robust temporal ATAC peaks
+  # B. Plot temporal ATAC peaks
   # ========================================================
-  if (length(peaks_in_region) > 0) {
-    plotRanges(
-      data = peaks_in_region, params = params, 
-      x = 0.5, y = 2.0,
-      width = 6.5, height = 0.30,
-      default.units = "inches", 
-      fill = "firebrick3", linecolor = "firebrick3")
+
+  # --------------------------------------------------------
+  # B1. Plot NONSIGNIFICANT temporal peaks in BLACK
+  # --------------------------------------------------------
+  if (length(nonpeaks_in_region) > 0) {
     
-    plotText(
-      label = "Strong + robust temporal peaks",
-      x = 0.5, y = 1.92, fontsize = 7,
-      just = c("left", "bottom"), default.units = "inches")
+    plotRanges(
+      data = nonpeaks_in_region,
+      params = params,
+      x = 0.5,
+      y = 2.0,
+      width = 6.5,
+      height = 0.30,
+      default.units = "inches",
+      fill = "black",
+      linecolor = "black")}
+
+  # --------------------------------------------------------
+  # B2. Plot STRONG + ROBUST temporal peaks in RED
+  # --------------------------------------------------------
+  if (length(peaks_in_region) > 0) {
+    
+    plotRanges(
+      data = peaks_in_region,
+      params = params, 
+      x = 0.5,
+      y = 2.0,
+      width = 6.5,
+      height = 0.30,
+      default.units = "inches", 
+      fill = "firebrick3",
+      linecolor = "firebrick3")
   }
+  # --------------------------------------------------------
+  # B3. Peak track label
+  # --------------------------------------------------------
+  plotText(
+    label = paste0(
+      "Temporal peaks: ",
+      length(nonpeaks_in_region),
+      " nonsignificant; ",
+      length(peaks_in_region),
+      " strong + robust"),
+    x = 0.5,
+    y = 1.92,
+    fontsize = 7,
+    just = c("left", "bottom"),
+    default.units = "inches")
 
   # ========================================================
   # C. Plot genes in the genomic interval
   # ========================================================
   plotGenes(
-    params = params, stroke = 1, fontsize = 7, 
-    x = 0.5, y = 2.55,
-    height = 0.60, width = 6.5, default.units = "inches")
+    params = params,
+    stroke = 1,
+    fontsize = 7, 
+    x = 0.5,
+    y = 2.55,
+    height = 0.60,
+    width = 6.5,
+    default.units = "inches")
 
   # ========================================================
   # D. Plot genome coordinate label
   # ========================================================
   plotGenomeLabel(
-    params = params, x = 0.5, y = 3.35,
-    length = 6.5, default.units = "inches")
-}
+    params = params,
+    x = 0.5,
+    y = 3.35,
+    length = 6.5,
+    default.units = "inches")}
 
 # ==========================================================
 # 5. Execute Loop inside a single PDF Output Device
 # ==========================================================
-pdf("D:/Rebecca_Paper/HSCR_strong_robust_peak_gene_interactions.pdf", width = 7.5, height = 4)
 
-genes_to_plot <- unique(strong_robust_candidates$gene_id)
+pdf(
+  "D:/Rebecca_Paper/HSCR_strong_robust_peak_gene_interactions.pdf",
+  width = 7.5,
+  height = 4
+)
+
+genes_to_plot <- unique(
+  strong_robust_candidates$gene_id
+)
 
 for (gene in genes_to_plot) {
-  # Wrapping each in tryCatch prevents a single failing gene from 
-  # crashing the batch generation mid-way through.
+  
+  # Wrapping each in tryCatch prevents a single failing gene
+  # from crashing the batch generation mid-way through.
   try({
     plot_peak_gene(gene)
   }, silent = FALSE)
 }
 
 dev.off()
-
