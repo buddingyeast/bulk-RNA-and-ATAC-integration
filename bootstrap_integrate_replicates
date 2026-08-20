@@ -721,3 +721,35 @@ summary(
 ############################################################
 
 plan(sequential)
+
+#####final table filtering for robust peaks#####
+final_results_df %>%
+  summarise(
+    total_pairs = n(),
+
+    r_gt_09 =
+      sum(abs(mean_timepoint_r) >= 0.9, na.rm = TRUE),
+
+    direction_95 =
+      sum(prop_same_direction >= 0.95, na.rm = TRUE),
+
+    robust_08 =
+      sum(robust_r_08, na.rm = TRUE),
+
+    robust_09 =
+      sum(robust_r_09, na.rm = TRUE),
+
+    strong_and_robust =
+      sum(
+        abs(mean_timepoint_r) >= 0.9 &
+        prop_same_direction >= 0.95 &
+        prop_abs_r_ge_0.8 >= 0.80,
+        na.rm = TRUE
+      ),
+
+    nominal_p_05 =
+      sum(p.value < 0.05, na.rm = TRUE),
+
+    FDR_05 =
+      sum(padj < 0.05, na.rm = TRUE)
+  )
