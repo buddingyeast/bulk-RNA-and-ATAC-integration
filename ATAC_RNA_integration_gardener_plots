@@ -134,10 +134,9 @@ if (length(genes1) > 0 && length(peaks2) > 0 && length(genes1) == length(peaks2)
     height = 1.0, 
     default.units = "inches",
     just = c("left", "top"),
-    fill = arch_colors,        
+    fill = NA,        
     linecolor = arch_colors,    
-    lwd = 1,
-    spaceHeight = 0.7)
+    lwd = 1,spaceHeight = 0.7)
   
   min_score <- min(scores, na.rm = TRUE)
   max_score <- max(scores, na.rm = TRUE)
@@ -330,8 +329,8 @@ plot_peak_gene <- function(
   pairs_gene <- strong_robust_candidates %>%
     filter(
       gene_id == target_gene_id,
-      peak_id %in% names(strong_peaks_gr)
-    )
+      peak_id %in% names(strong_peaks_gr))
+  gene_name <- unique(pairs_gene$gene_name)
 
   # --------------------------------------------------------
   # Define genomic region
@@ -409,19 +408,8 @@ plot_peak_gene <- function(
       labels = c("-1", "1"),
       labeljust = c("left", "center"))
 
-    plotText(
-      label = paste0("Strong + robust peak-gene pairs (n = ", nrow(pairs_in_region), ")"),
-      x = 0.5, y = 0.25,
-      fontsize = 8, fontface = "bold",
-      just = c("left", "top"),
-      default.units = "inches")
-  } else {
-    plotText(
-      label = "No strong + robust peak-gene pairs in plotted interval",
-      x = 0.5, y = 0.5,
-      fontsize = 8, just = c("left", "top"),
-      default.units = "inches")
-  }
+    plotText( label = paste0(gene_name),x = 0.5, y = 0.25,fontsize = 8,fontface = "bold",just = c("left", "top"),default.units = "inches")
+  } 
 
   # ========================================================
   # B. Plot strong/robust temporal ATAC peaks
