@@ -1,0 +1,173 @@
+
+###plotting with plot gardener, used with pearson correlation code or some other statistic and granges format###
+library(plotgardener)
+library(RColorBrewer)
+
+# Extract the GRanges for only the significant items
+
+#rna
+significant_ids <- unique(significant_results_df$gene_id)
+matching_indices <- match(significant_ids, gr_object@elementMetadata@listData[["ensembl_gene_id"]])
+matching_indices <- na.omit(matching_indices)
+significant_genes_gr <- gr_object[matching_indices]
+names(significant_genes_gr) <- significant_genes_gr@elementMetadata@listData[["ensembl_gene_id"]]
+
+#atac
+significant_ids <- unique(significant_results_df$peak_id)
+matching_indices <- match(significant_ids, gr_object2@elementMetadata@listData[["name"]])
+matching_indices <- na.omit(matching_indices)
+significant_peaks_gr <- gr_object2[matching_indices]
+names(significant_peaks_gr) <- significant_peaks_gr@elementMetadata@listData[["name"]]
+
+
+#for non sig peaks
+significant_ids <- unique(results_df$peak_id)
+matching_indices <- match(significant_ids, gr_object2@elementMetadata@listData[["name"]])
+matching_indices <- na.omit(matching_indices)
+nonsignificant_peaks_gr <- gr_object2[matching_indices]
+names(nonsignificant_peaks_gr) <- significant_peaks_gr@elementMetadata@listData[["name"]]
+
+
+#example gene ids
+#Ednrb ENSMUSG00000022122
+#Ret ENSMUSG00000030110
+#L1cam ENSMUSG00000031391
+#Edn3 ENSMUSG00000027524
+#Sox10 ENSMUSG00000033006
+
+
+target_gene_id <- "ENSMUSG00000058145"
+target_gene_tss <- significant_genes_gr[target_gene_id]
+
+plot_chrom <- as.character(seqnames(target_gene_tss))
+plot_center <- start(target_gene_tss)
+plot_start <- plot_center - 150000
+plot_end <- plot_center + 350000
+
+# Create plotting parameters object
+params <- pgParams(chrom = plot_chrom, 
+                   chromstart = plot_start, 
+                   chromend = plot_end, 
+                   assembly = "mm10")
+
+# Create a plot page
+pageCreate(width = 7.5, height = 4, default.units = "inches",showGuides = FALSE)
+
+# Plot chromosome ideogram/label at the top
+plotGenomeLabel(params = params, x = 0.5, y = 2.5, length = 6.5, default.units = "inches")
+
+# Plot gene TSS track 
+# (Using plotRanges for simple points, adjust y-position as needed)
+# Filter genes to only those in the current plot region
+genes_in_region <- subsetByOverlaps(significant_genes_gr, GRanges(params$chrom, IRanges(params$chromstart, params$chromend)))
+
+if (length(genes_in_region) > 0) {
+  
+  # Get the label text using the correct path (CRITICAL)
+  # Ensure this path correctly extracts the desired gene IDs
+  gene_labels <- tryCatch({
+    genes_in_region@elementMetadata@listData[["ensembl_gene_id"]] 
+  }, error = function(e) {
+    warning("Could not extract gene labels using the specified path. Plotting without labels.")
+    NULL # Set labels to NULL if extraction fails
+  })
+  
+  # Plot ranges (TSSs have width 1, appearing as lines/ticks)
+  plotRanges(
+    data = genes_in_region,
+    params = params,
+    x = 0.5, y = 2.5, width = 6.5, height = 0.5, # Height for the whole track space
+    default.units = "inches",
+    fill = "blue",          # Color for the TSS marks
+    linecolor = "blue",     # Ensure line color is set too
+    label = if (!is.null(gene_labels)) gene_labels else NULL, 
+    fontsize = 6,          # Adjust label size
+    just = c("left", "bottom"))
+  }
+
+#plot peaks
+# Filter peaks to only those in the current plot region
+peaks_in_region <- subsetByOverlaps(significant_peaks_gr, GRanges(params$chrom, IRanges(params$chromstart, params$chromend)))
+
+if (length(peaks_in_region) > 0) {
+  plotRanges(data = peaks_in_region, 
+             params = params,
+             x = 0.5, y = 2, width = 6.5, height = 0.5, default.units = "inches",
+             fill = "red",linecolor = "red") 
+  # Add a track label
+  plotText(label = "N.S.Peaks", x = 0.5, y = 2.2, just = c("left", "top"), default.units = "inches")
+}
+
+# Plot the significant interactions (pairs) as arcs
+# First, filter the significant pairs to only those within the plotted region
+pairs_in_region_df <- significant_results_df %>%
+  filter(gene_id %in% names(genes_in_region) & peak_id %in% names(peaks_in_region))
+
+if (nrow(pairs_in_region_df) > 0) {
+  # Get the GRanges for the paired ends ONLY FOR THIS REGION
+  genes1 <- genes_in_region[pairs_in_region_df$gene_id]
+  peaks2 <- peaks_in_region[pairs_in_region_df$peak_id]}
+  
+if (length(genes1) > 0 && length(peaks2) > 0 && length(genes1) == length(peaks2)) {
+  # Create the dataframe
+  bedpe_df <- data.frame(
+    chrom1 = as.character(seqnames(genes1)),
+    start1 = start(genes1),
+    end1 = end(genes1), # For TSS (width=1), start1 and end1 are often the same or off by 1
+    chrom2 = as.character(seqnames(peaks2)),
+    start2 = start(peaks2),
+    end2 = end(peaks2),
+    stringsAsFactors = FALSE
+  )
+  
+  scores <- -log10(significant_results_df$padj)
+  pal_fun <- colorRampPalette(brewer.pal(9, "Reds")[4:9])
+  arch_colors <- mapColors(scores, palette = pal_fun)
+  
+  # --- Plot the significant interactions using plotPairs with the BEDPE dataframe ---
+  archplot<-plotPairsArches(
+    data = bedpe_df,
+    params = params,       
+    x = 0.5, 
+    y = 1.5,              
+    width = 6.5,          
+    height = 1.0, 
+    default.units = "inches",
+    just = c("left", "top"),
+    fill = NA,        
+    linecolor = arch_colors,    
+    lwd = 1,spaceHeight = 0.7)
+  
+  min_score <- min(scores, na.rm = TRUE)
+  max_score <- max(scores, na.rm = TRUE)
+  
+  annoHeatmapLegend(plot=archplot,
+    x = 6.0, y = 1.0, 
+    width = unit(0.1, "inches"), 
+    height = unit(0.75, "inches"),
+    just = c("left", "bottom"),
+    default.units = "inches",
+    range = c(min_score, max_score), 
+    palette = pal_fun,         
+    fontsize = 6,
+    # Add rounded labels for the min and max
+    labels = c(round(min_score, 1), round(max_score, 1)),
+    labeljust = c("left", "center"))
+  
+  # Add a label for the track area (optional)
+  plotText(label = "Significant Interactions", x = 0.5, y = 1.5, just = c("left", "top"), default.units = "inches",col=arch_colors)
+}
+
+plotGenes(params = params, stroke = 1, fontsize = 8, x=0.5,y = 2.6, height = .6,width = 6.5)
+
+
+#plot nonsignficant peaks
+nonpeaks_in_region <- subsetByOverlaps(nonsignificant_peaks_gr, GRanges(params$chrom, IRanges(params$chromstart, params$chromend)))
+
+if (length(peaks_in_region) > 0) {
+  plotRanges(data = nonpeaks_in_region, 
+             params = params,
+             x = 0.5, y = 2, width = 6.5, height = 0.5, default.units = "inches",
+             fill = "black",linecolor = "black") }
+
+dev.off()
