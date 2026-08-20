@@ -222,77 +222,6 @@ library(grid)
 # 1. Extract GRanges for candidate genes
 # ==========================================================
 
-strong_gene_ids <- unique(strong_robust_candidates$gene_id)
-
-matching_gene_indices <- match(
-  strong_gene_ids,
-  gr_object@elementMetadata@listData[["ensembl_gene_id"]])
-
-matching_gene_indices <- na.omit(matching_gene_indices)
-
-strong_genes_gr <- gr_object[matching_gene_indices]
-
-names(strong_genes_gr) <-
-  strong_genes_gr@elementMetadata@listData[["ensembl_gene_id"]]
-
-# ==========================================================
-# 2. Extract GRanges for candidate ATAC peaks
-# ==========================================================
-
-strong_peak_ids <- unique(strong_robust_candidates$peak_id)
-
-matching_peak_indices <- match(
-  strong_peak_ids,
-  gr_object2@elementMetadata@listData[["name"]])
-
-matching_peak_indices <- na.omit(matching_peak_indices)
-
-strong_peaks_gr <- gr_object2[matching_peak_indices]
-
-names(strong_peaks_gr) <-
-  strong_peaks_gr@elementMetadata@listData[["name"]]
-
-# ==========================================================
-# 3. Check that peak/gene IDs were successfully matched
-# ==========================================================
-
-cat(
-  "Candidate genes in dataframe:",
-  length(unique(strong_robust_candidates$gene_id)),"\n")
-
-cat("Candidate genes matched to GRanges:",
-  length(strong_genes_gr),"\n")
-
-cat(
-  "Candidate peaks in dataframe:",
-  length(unique(strong_robust_candidates$peak_id)),
-  "\n")
-
-cat(
-  "Candidate peaks matched to GRanges:",
-  length(strong_peaks_gr),
-  "\n")
-
-# Report IDs that did not match, if any
-
-missing_genes <- setdiff(
-  unique(strong_robust_candidates$gene_id),
-  names(strong_genes_gr))
-
-missing_peaks <- setdiff(
-  unique(strong_robust_candidates$peak_id),
-  names(strong_peaks_gr))
-
-if (length(missing_genes) > 0) {
-  warning(
-    "The following gene IDs were not found in gr_object: ",
-    paste(missing_genes, collapse = ", "))
-}
-if (length(missing_peaks) > 0) {
-  warning(
-    "Some peak IDs were not found in gr_object2. Number missing: ",
-    length(missing_peaks))}
-
 # ==========================================================
 # 4. Function to plot one gene
 # ==========================================================
@@ -309,15 +238,14 @@ plot_peak_gene <- function(
       paste(
         "Gene",
         target_gene_id,
-        "was not found among the strong/robust candidate genes."))}
+        "was not found among the strong/robust candidate genes."))
+  }
+  
   # --------------------------------------------------------
   # Get target gene coordinates
   # --------------------------------------------------------
   target_gene <- strong_genes_gr[target_gene_id]
   plot_chrom <- as.character(seqnames(target_gene))[1]
-
-  # Assumes gr_object represents TSS positions or
-  # that start() is the desired anchor point.
   plot_center <- start(target_gene)[1]
 
   plot_start <- max(1, plot_center - upstream)
@@ -326,7 +254,6 @@ plot_peak_gene <- function(
   # --------------------------------------------------------
   # Create plotgardener parameters
   # --------------------------------------------------------
-
   params <- pgParams(
     chrom = plot_chrom,
     chromstart = plot_start,
@@ -336,7 +263,6 @@ plot_peak_gene <- function(
   # --------------------------------------------------------
   # Select peak-gene pairs for THIS gene
   # --------------------------------------------------------
-
   pairs_gene <- strong_robust_candidates %>%
     filter(
       gene_id == target_gene_id,
@@ -346,7 +272,6 @@ plot_peak_gene <- function(
   # --------------------------------------------------------
   # Define genomic region
   # --------------------------------------------------------
-
   region_gr <- GRanges(
     seqnames = plot_chrom,
     ranges = IRanges(
@@ -356,7 +281,6 @@ plot_peak_gene <- function(
   # --------------------------------------------------------
   # Find candidate peaks in plotted region
   # --------------------------------------------------------
-
   peaks_in_region <- subsetByOverlaps(
     strong_peaks_gr,
     region_gr)
@@ -364,15 +288,13 @@ plot_peak_gene <- function(
   # --------------------------------------------------------
   # Restrict peak-gene pairs to plotted region
   # --------------------------------------------------------
-
   pairs_in_region <- pairs_gene %>%
     filter(
       peak_id %in% names(peaks_in_region))
 
   # --------------------------------------------------------
-  # Create plotting page
+  # Create plotting page (Fresh page per gene)
   # --------------------------------------------------------
-
   pageCreate(
     width = 7.5,
     height = 4,
@@ -382,58 +304,28 @@ plot_peak_gene <- function(
   # ========================================================
   # A. Plot peak-gene interaction arcs
   # ========================================================
-
   if (nrow(pairs_in_region) > 0) {
-
-    # IMPORTANT:
-    # Index using pairs_in_region so every arc stays
-    # correctly matched to its correlation value.
-
-    genes1 <- strong_genes_gr[
-      pairs_in_region$gene_id]
-    peaks2 <- strong_peaks_gr[
-      pairs_in_region$peak_id]
-
-    # ------------------------------------------------------
-    # Construct BEDPE-style dataframe
-    # ------------------------------------------------------
+    genes1 <- strong_genes_gr[pairs_in_region$gene_id]
+    peaks2 <- strong_peaks_gr[pairs_in_region$peak_id]
 
     bedpe_df <- data.frame(
-
       chrom1 = as.character(seqnames(genes1)),
       start1 = start(genes1),
       end1 = end(genes1),
-
       chrom2 = as.character(seqnames(peaks2)),
       start2 = start(peaks2),
       end2 = end(peaks2),
-
       stringsAsFactors = FALSE)
 
+    scores <- pairs_in_region$correlation
+    pal_fun <- colorRampPalette(rev(brewer.pal(11, "RdBu")))
+    arc_colors <- mapColors(scores, range = c(-1, 1), palette = pal_fun)
 
-    # ------------------------------------------------------
-    # Pearson correlation scores
-    # ------------------------------------------------------
-
-    scores <- pairs_in_region$r
-
-    pal_fun <- colorRampPalette(
-      rev(brewer.pal(11, "RdBu")))
-
-    arc_colors <- mapColors(
-      scores,
-      range = c(-1, 1),
-      palette = pal_fun)
-
-    # ------------------------------------------------------
-    # Plot arcs
-    # ------------------------------------------------------
     archplot <- plotPairsArches(
       data = bedpe_df,
       params = params,
-      x = 0.5,y = 0.65,
-      width = 6.5,
-      height = 1.15,
+      x = 0.5, y = 0.65,zrange = c(-1, 1)
+      width = 6.5,height = 1.15,
       default.units = "inches",
       just = c("left", "top"),
       fill = arc_colors,
@@ -441,72 +333,71 @@ plot_peak_gene <- function(
       lwd = 1.5,
       spaceHeight = 0.8)
 
-    # ------------------------------------------------------
-    # Pearson r legend
-    # ------------------------------------------------------
-    annoHeatmapLegend(plot = archplot,x = 6.7,y = 0.75,width = unit(0.1,"inches"),
-      height = unit(
-        0.7,
-        "inches"),
-
-      just = c(
-        "left",
-        "bottom"),
-
+    annoHeatmapLegend(
+      plot = archplot, x = 6.7, y = 0.75, 
+      width = unit(0.1, "inches"),
+      height = unit(0.7, "inches"),
+      just = c("left", "bottom"),
       default.units = "inches",
       range = c(-1, 1),
       palette = pal_fun,
       fontsize = 6,
-      labels = c("-1","1"),
+      labels = c("-1", "1"),
+      labeljust = c("left", "center"))
 
-      labeljust = c(
-        "left",
-        "center"))
-
-    # ------------------------------------------------------
-    # Arc track label
-    # ------------------------------------------------------
-    plotText(label = paste0("Strong + robust peak-gene pairs (n = ",
-        nrow(pairs_in_region),")"),
-      x = 0.5,y = 0.25,
-      fontsize = 8,fontface = "bold",
-      just = c("left","top"),
+    plotText(
+      label = paste0("Strong + robust peak-gene pairs (n = ", nrow(pairs_in_region), ")"),
+      x = 0.5, y = 0.25,
+      fontsize = 8, fontface = "bold",
+      just = c("left", "top"),
       default.units = "inches")
   } else {
-
-    # If no candidate peaks fall inside the chosen
-    # plotting window, indicate this on the figure.
-    plotText(label = "No strong + robust peak-gene pairs in plotted interval",x = 0.5,y = 0.5,
-      fontsize = 8,just = c("left","top"),default.units = "inches")}
+    plotText(
+      label = "No strong + robust peak-gene pairs in plotted interval",
+      x = 0.5, y = 0.5,
+      fontsize = 8, just = c("left", "top"),
+      default.units = "inches")
+  }
 
   # ========================================================
   # B. Plot strong/robust temporal ATAC peaks
   # ========================================================
-
   if (length(peaks_in_region) > 0) {
-
-    plotRanges(data = peaks_in_region,params = params,x = 0.5,y = 2.0,
-      width = 6.5,height = 0.30,
-      default.units = "inches",fill = "firebrick3",linecolor = "firebrick3")
+    plotRanges(
+      data = peaks_in_region, params = params, 
+      x = 0.5, y = 2.0,
+      width = 6.5, height = 0.30,
+      default.units = "inches", 
+      fill = "firebrick3", linecolor = "firebrick3")
+    
     plotText(
       label = "Strong + robust temporal peaks",
-      x = 0.5,y = 1.92,fontsize = 7,
-      just = c("left","bottom"),default.units = "inches")}
+      x = 0.5, y = 1.92, fontsize = 7,
+      just = c("left", "bottom"), default.units = "inches")
+  }
 
   # ========================================================
   # C. Plot genes in the genomic interval
   # ========================================================
-  plotGenes(params = params,stroke = 1,fontsize = 7,x = 0.5,y = 2.55,
-    height = 0.60,width = 6.5,default.units = "inches")
+  plotGenes(
+    params = params, stroke = 1, fontsize = 7, 
+    x = 0.5, y = 2.55,
+    height = 0.60, width = 6.5, default.units = "inches")
 
   # ========================================================
   # D. Plot genome coordinate label
   # ========================================================
-  plotGenomeLabel(params = params,x = 0.5,y = 3.35,length = 6.5,default.units = "inches")
+  plotGenomeLabel(
+    params = params, x = 0.5, y = 3.35,
+    length = 6.5, default.units = "inches")
+}
 
-  pdf("D:/Rebecca_Paper/HSCR_strong_robust_peak_gene_interactions.pdf", width = 7.5, height = 4)
+# ==========================================================
+# 5. Execute Loop inside a single PDF Output Device
+# ==========================================================
+pdf("D:/Rebecca_Paper/HSCR_strong_robust_peak_gene_interactions.pdf", width = 7.5, height = 4)
 
-  genes_to_plot <- unique(strong_robust_candidates$gene_id)
+genes_to_plot <- unique(strong_robust_candidates$gene_id)
 
 for (gene in genes_to_plot) {
   # Wrapping each in tryCatch prevents a single failing gene from 
