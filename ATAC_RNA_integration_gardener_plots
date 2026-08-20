@@ -388,7 +388,7 @@ plot_peak_gene <- function(
     archplot <- plotPairsArches(
       data = bedpe_df,
       params = params,
-      x = 0.5, y = 0.65,zrange = c(-1, 1)
+      x = 0.5, y = 0.65,zrange = c(-1, 1),
       width = 6.5,height = 1.15,
       default.units = "inches",
       just = c("left", "top"),
