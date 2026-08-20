@@ -530,7 +530,7 @@ run_replicate_robustness <- function(
 }
 
 ############################################################
-# 6. Run all 1,022 gene-peak pairs in parallel
+# 6. Run all gene-peak pairs in parallel
 ############################################################
 
 robustness_results <- future_map2_dfr(
