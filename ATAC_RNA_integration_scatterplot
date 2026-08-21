@@ -279,15 +279,9 @@ plot_correlation_scatter <- function(target_gene_id,
       size = 3) +
     
     # Labels
-    labs(
-      title = paste0(
-        target_gene_id,
-        "\n",
-        target_peak_id
-      ),
+    labs(title = paste0(stats$gene_name,"\n",target_peak_id),
       x = "RNA Norm. Counts",
-      y = "ATAC Norm. Counts"
-    ) +
+      y = "ATAC Norm. Counts") +
     theme_bw() +
     theme(
       axis.title.x = element_text(size = 8),
