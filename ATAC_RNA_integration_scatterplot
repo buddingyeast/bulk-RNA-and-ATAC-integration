@@ -362,11 +362,11 @@ plot_strong_robust_candidates <- function(strong_robust_candidates,
   ##########################################################
   
   for (i in seq_len(nrow(pairs_to_plot))) {
-    current_gene <- as.character(
-      pairs_to_plot$gene_id[i])
+    current_gene <- as.character(pairs_to_plot$gene_id[i])
+
+    current_gene_name<-as.character(pairs_to_plot$gene_name[i])
     
-    current_peak <- as.character(
-      pairs_to_plot$peak_id[i])
+    current_peak <- as.character(pairs_to_plot$peak_id[i])
     
     # Generate scatterplot
     p <- plot_correlation_scatter(
@@ -379,7 +379,7 @@ plot_strong_robust_candidates <- function(strong_robust_candidates,
     
     # Unique plot name
     plot_name <- paste(
-      current_gene,
+      current_gene_name,
       current_peak,
       sep = "_vs_")   
     
